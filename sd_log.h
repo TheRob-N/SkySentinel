@@ -1,5 +1,8 @@
 /*
  * sd_log.h — SkySentinel
+ * Created by:
+ * Rob Neyhard
+ * Copyright (c) 2026
  * SD logging in WiGLE CSV format (the only format — no native format needed)
  *
  * Files: /SS_WIGLE_WIFI.CSV   /SS_WIGLE_BLE.CSV

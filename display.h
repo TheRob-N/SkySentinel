@@ -1,5 +1,8 @@
 /*
- * display.h — SkySentinel v0.5.9
+ * display.h — SkySentinel
+ * Created by:
+ * Rob Neyhard
+ * Copyright (c) 2026
  * UI with selective redraw (no full-screen sprite — heap can't support
  * a 115KB buffer alongside BLE/WiFi/queues). Flicker is eliminated by
  * only repainting pixels that actually changed each frame: static labels
@@ -21,6 +24,7 @@ extern volatile uint8_t gpsHour, gpsMinute, gpsSecond;
 extern bool    sdReady;
 extern uint8_t brightness;
 void applyBrightness();  // defined in SkySentinel.ino
+extern const char* APP_VERSION;  // defined in SkySentinel.ino
 extern volatile uint8_t gpsMonth;
 extern volatile uint8_t gpsDay;
 
@@ -134,6 +138,13 @@ static char     _droneMAC[18] = "", _flockMAC[18] = "";
 static uint8_t  _activePage   = 0;
 static uint8_t  _scanTick     = 0;
 static uint32_t _lastScanMs   = 0;
+
+// Border flash state: toggles on/off at a fixed interval while a panel is
+// in the "fresh" DETECTED state (mode==1). LAST SEEN (mode==2) and idle
+// (mode==0) always get a solid border — only active detections flash.
+static bool     _borderFlashOn = true;
+static uint32_t _lastFlashMs   = 0;
+#define BORDER_FLASH_INTERVAL_MS 350
 static uint32_t _lastRedrawMs = 0;
 
 // Selective redraw caches. No sprites and no full-region wipes per tick.
@@ -2280,7 +2291,7 @@ void displaySplash(TFT_eSPI& tft) {
 
   drawAlphaTextCenter(SCR_W/2, 176, TXT_INIT_W, TXT_INIT_H, TXT_INIT, C_WHITE, C_BG);
   tft.setTextColor(C_DIM, C_BG);
-  tft.drawCentreString("v0.5.9", SCR_W/2, 200, 1);
+  tft.drawCentreString(APP_VERSION, SCR_W/2, 200, 1);
 
   delay(1200);
 }
@@ -2312,6 +2323,13 @@ void displayInit(TFT_eSPI& tft, bool flipped) {
 void displayTick(uint16_t flockCount, uint16_t droneCount) {
   uint32_t now = millis();
 
+  bool flashToggled = false;
+  if (now - _lastFlashMs >= BORDER_FLASH_INTERVAL_MS) {
+    _borderFlashOn = !_borderFlashOn;
+    _lastFlashMs = now;
+    flashToggled = true;
+  }
+
   if (now - _lastScanMs >= 400) {
     _scanTick++;
     _lastScanMs = now;
@@ -2323,8 +2341,10 @@ void displayTick(uint16_t flockCount, uint16_t droneCount) {
   bool pageChanged = (_activePage != _prevPage);
 
   if (_activePage == 0) {
-    // Main page redraws at 4fps for scan/status freshness without full-region wipes
-    if (now - _lastRedrawMs >= 250) {
+    // Main page redraws at 4fps for scan/status freshness without full-region
+    // wipes, OR immediately when the border flash phase toggles so an active
+    // detection actually blinks instead of waiting for the next 250ms tick.
+    if (flashToggled || now - _lastRedrawMs >= 250) {
       _lastRedrawMs = now;
       drawHeader();
       drawMainPage();
@@ -2545,8 +2565,11 @@ void drawPanel(bool isDrone, bool detected, int8_t rssi,
   uint16_t lastSeenSec = active ? (uint16_t)min((uint32_t)5999, ageMs / 1000UL) : 65535;
 
   bool staticChanged = _pageStaticDirty || cache.mode != mode || cache.rssi != rssi ||
-                       strncmp(cache.method, method, sizeof(cache.method)) != 0 ||
-                       (mode == 2 && cache.lastSeenSec != lastSeenSec);
+                       strncmp(cache.method, method, sizeof(cache.method)) != 0;
+  // The LAST SEEN countdown ticks every second, but that alone shouldn't
+  // trigger a full panel repaint (which reads as the whole box flashing).
+  // It gets its own narrow redraw further down instead.
+  bool timerChanged = (mode == 2) && (cache.lastSeenSec != lastSeenSec);
 
   if (staticChanged) {
     _tft->fillRoundRect(px + 4, PANEL_Y + 6, PANEL_W - 8, PANEL_H - 12, 6, C_PANEL_BG);
@@ -2594,12 +2617,27 @@ void drawPanel(bool isDrone, bool detected, int8_t rssi,
     cache.borderOn = false;
   }
 
-  // Animation-heavy effects are deferred. For now, keep the panel stable:
-  // solid colored border while active/stale, subdued border while searching.
-  uint16_t border = active ? col : C_DIV;
+  // Narrow redraw for just the countdown text — happens every second while
+  // in LAST SEEN, without wiping/repainting the rest of the panel.
+  if (!staticChanged && timerChanged) {
+    char buf[18]; snprintf(buf, sizeof(buf), "%02u:%02u", lastSeenSec/60, lastSeenSec%60);
+    _tft->setTextFont(4);
+    _tft->setTextColor(C_WHITE, C_PANEL_BG);
+    _tft->drawCentreString(buf, pcx, PANEL_Y + 82, 4);
+    cache.lastSeenSec = lastSeenSec;
+  }
+
+  // Border behavior:
+  //  - idle (mode 0):        solid dim border
+  //  - fresh DETECTED (1):   FLASHING colored border — this is the alert state
+  //  - stale LAST SEEN (2):  solid colored border, no flash
+  uint16_t border = !active ? C_DIV : col;
   bool borderOn = active;
-  if (staticChanged || cache.borderOn != borderOn || !active) {
-    drawPanelBorder(px, border);
+  bool shouldFlash = fresh;  // only the true "just detected" state flashes
+  bool borderVisible = shouldFlash ? _borderFlashOn : true;
+
+  if (staticChanged || cache.borderOn != borderOn || shouldFlash) {
+    drawPanelBorder(px, borderVisible ? border : C_PANEL_BG);
     cache.borderOn = borderOn;
   }
 }

@@ -1,5 +1,8 @@
 /*
  * settings.h — SkySentinel
+ * Created by:
+ * Rob Neyhard
+ * Copyright (c) 2026
  * NVS-backed settings using ESP32 Preferences library
  * All settings declared here, defined in SkySentinel.ino
  */

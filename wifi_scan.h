@@ -1,5 +1,8 @@
 /*
  * wifi_scan.h — SkySentinel
+ * Created by:
+ * Rob Neyhard
+ * Copyright (c) 2026
  * Non-blocking async WiFi scan for Flock OUI + SSID detection
  */
 #pragma once

@@ -1,5 +1,8 @@
 /*
  * gps.h — SkySentinel
+ * Created by:
+ * Rob Neyhard
+ * Copyright (c) 2026
  * GPS stub — placeholder until ATGM336H module arrives
  * Wire: GPS TX → GPIO27 (P3 pin 3), VCC → P3 pin 4, GND → P3 pin 1
  * Library: TinyGPS++ (install via Library Manager)

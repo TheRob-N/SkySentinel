@@ -1,6 +1,9 @@
 # CYD Flock & Drone Detection Firmware — Architecture & Build Plan
 
-**Project:** FlockHound-CYD  
+**Project:** FlockHound-CY
+ Created by:
+  Rob Neyhard
+ Copyright (c) 2026D  
 **Hardware:** ESP32-2432S028 (CYD), ILI9341 240×320 resistive touch, built-in SD, WiFi + BLE  
 **IDE:** Arduino IDE · Board target: ESP32 Dev Module (240 MHz, 4MB flash, partition: Default 4MB with spiffs)
 

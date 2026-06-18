@@ -1,5 +1,8 @@
 /*
  * ble_scan.h — SkySentinel
+ * Created by:
+ * Rob Neyhard
+ * Copyright (c) 2026
  * BLE advertisement callbacks: Flock Safety + FAA Remote ID (ASTM F3411)
  * Runs on Core 0 via FreeRTOS task in main .ino
  */

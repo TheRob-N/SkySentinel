@@ -1,6 +1,10 @@
 /*
  * SkySentinel v0.2
  * Passive Flock Safety ALPR + FAA Remote ID drone detection
+ * Created by:
+ * Rob Neyhard
+ * Copyright (c) 2026
+ *
  * Hardware: ESP32-2432S028 (CYD)
  *
  * Board:      ESP32 Dev Module
@@ -36,6 +40,11 @@
 #include "sd_log.h"
 #include "drone_id.h"
 #include "gps.h"
+
+const char* APP_NAME        = "SkySentinel";
+const char* APP_VERSION     = "v0.5.9";
+const char* APP_AUTHOR      = "Rob Neyhard";
+const char* APP_TAGLINE     = "Passive Flock Safety ALPR + FAA Remote ID drone detection";
 
 // ── Pins ─────────────────────────────────────────────────────────────────────
 #define PIN_BL   21

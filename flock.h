@@ -4,6 +4,9 @@
 
 // ============================================================
 // Flock Safety & Raven detection data
+// Created by:
+// Rob Neyhard
+// Copyright (c) 2026
 // Research credits:
 //   WiFi OUI list (31):   OrdoOuroborous/@NitekryDPaul (30) +
 //                         Michael/DeFlockJoplin (1 = 82:6b:f2)
