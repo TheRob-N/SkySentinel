@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Flash SkySentinel onto an ESP32-C5, Heltec Wireless Tracker, CYD or ESP32 DevKit straight from Chrome, Edge or Firefox 151+. No software to install.">
+<link rel="canonical" href="https://skysentinel.neyhard.com/flash.html">
+<meta name="robots" content="index, follow">
+<meta name="author" content="Robert Neyhard">
+<meta name="theme-color" content="#06111D">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="SkySentinel">
+<meta property="og:title" content="Install SkySentinel firmware from your browser">
+<meta property="og:description" content="Flash SkySentinel onto an ESP32-C5, Heltec Wireless Tracker, CYD or ESP32 DevKit straight from Chrome, Edge or Firefox 151+. No software to install.">
+<meta property="og:url" content="https://skysentinel.neyhard.com/flash.html">
+<meta property="og:image" content="https://skysentinel.neyhard.com/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="SkySentinel radar logo: know what's watching">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Install SkySentinel firmware from your browser">
+<meta name="twitter:description" content="Flash SkySentinel onto an ESP32-C5, Heltec Wireless Tracker, CYD or ESP32 DevKit straight from Chrome, Edge or Firefox 151+. No software to install.">
+<meta name="twitter:image" content="https://skysentinel.neyhard.com/assets/og.png">
+<title>Install SkySentinel firmware from your browser</title>
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/site.css">
+<script src="assets/browser.js"></script>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="./"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2"><circle cx="16" cy="16" r="13"/><circle cx="16" cy="16" r="7"/><path d="M16 16 L26 6"/><circle cx="16" cy="16" r="2" fill="currentColor"/></svg><span class="logo"><span class="sky">SKY</span> SENTINEL</span></a>
+  <nav class="nav">
+    <a href="./">Home</a>
+    <a href="flash.html" aria-current="page">Install</a>
+    <a href="app/">Console</a>
+    <a href="docs.html">How-tos</a>
+    <a href="./#boards">Boards</a>
+    <a href="docs.html#source">Source</a>
+  </nav>
+</div></header>
+
+<div class="wrap">
+  <div class="steps">
+    <div>
+      <h2 style="margin-top:0">Install firmware</h2>
+      <p class="kicker" style="margin-bottom:0">Straight from this page over USB: nothing to download or install. Needs <b>Chrome or Edge on a desktop</b>
+        (Windows, macOS, Linux, ChromeOS). <span id="buildLine"></span></p>
+      <p class="warnbox" id="noSerial" hidden>This browser can't reach USB devices. Open this page in Chrome or Edge on a computer.
+        (Phones and Safari can't flash, nor Firefox before 151; you can still <a href="#downloads">download the files</a>.)</p>
+    </div>
+
+    <div class="step">
+      <h3>Pick your board</h3>
+      <div class="pick" id="pick"></div>
+    </div>
+
+    <div class="step">
+      <h3>Update or fresh install</h3>
+      <div class="seg"><button id="kApp" aria-pressed="true">UPDATE</button><button id="kFactory" aria-pressed="false">FRESH INSTALL</button></div>
+      <p id="kindText" style="color:var(--muted); margin:10px 0 0"></p>
+    </div>
+
+    <div class="step">
+      <h3>Connect and install</h3>
+      <div class="guide" id="guide"><p style="color:var(--muted); margin:0">Pick a board first.</p></div>
+      <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap; align-items:center">
+        <button class="btn primary" id="go" disabled>Connect and install</button>
+        <span class="mono" id="chipText" style="color:var(--muted)"></span>
+      </div>
+      <label style="display:flex; gap:8px; align-items:flex-start; margin-top:10px; color:var(--muted); font-size:14px">
+        <input type="checkbox" id="manual" style="margin-top:3px">
+        <span>I put the board in download mode myself: hold <b>BOOT</b>, tap <b>RST</b> (or <b>EN</b>), let go of BOOT, then press Connect and install.
+          Use this when connecting fails on its own.</span></label>
+      <div class="bar"><div id="bar"></div></div>
+      <pre class="log" id="log"></pre>
+      <p id="after" hidden style="margin:10px 0 0">Done. Open the <a href="app/">console</a> and press <b>CONNECT USB</b>.</p>
+    </div>
+
+    <div class="step" id="downloads">
+      <h3>Or download the files</h3>
+      <p style="color:var(--muted); margin:6px 0 10px">For flashing with esptool or PlatformIO. The <b>update</b> file goes at 0x10000; the <b>full</b> file
+        (bootloader, partitions and app) goes at 0x0 and erases the board's settings.</p>
+      <div id="dlList" class="mono" style="font-size:14px"></div>
+    </div>
+  </div>
+</div>
+
+<footer><div class="wrap"><span>SkySentinel &copy; 2026 Robert Neyhard. <a href="docs.html#source">Source code</a>.</span><span>The flasher is Espressif's esptool-js (Apache-2.0), served from this site.</span></div></footer>
+
+<script src="assets/boards.js"></script>
+<script type="module" src="assets/esptool.js"></script>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const CHIPS = { 0: "ESP32", 2: "ESP32-S2", 5: "ESP32-C3", 9: "ESP32-S3", 12: "ESP32-C2", 13: "ESP32-C6", 16: "ESP32-H2", 18: "ESP32-P4", 20: "ESP32-C61", 23: "ESP32-C5" };
+const FW = "app/firmware/";
+const st = { board: null, kind: "app", manifest: null, busy: false };
+if (!("serial" in navigator)) $("noSerial").hidden = false;
+
+const log = (t) => { const l = $("log"); l.textContent += t + "\n"; l.scrollTop = l.scrollHeight; };
+
+function renderPick() {
+  const built = new Set((st.manifest?.builds || []).map((b) => b.env));
+  $("pick").innerHTML = BOARDS.map((b) => {
+    const ok = b.env && (!st.manifest || built.has(b.env));
+    const note = !b.env ? "planned, not flashable yet" : !ok ? "no build published yet" : `${b.chip} · ${b.roles}`;
+    return `<button data-id="${b.id}" aria-pressed="${st.board?.id === b.id}" ${ok ? "" : "disabled"}><b>${b.name}</b><span>${note}</span></button>`;
+  }).join("");
+}
+$("pick").onclick = (e) => {
+  const btn = e.target.closest("button[data-id]");
+  if (!btn || btn.disabled || st.busy) return;
+  st.board = BOARDS.find((b) => b.id === btn.dataset.id);
+  renderPick(); render();
+};
+function setKind(k) { st.kind = k; $("kApp").setAttribute("aria-pressed", k === "app"); $("kFactory").setAttribute("aria-pressed", k === "factory"); render(); }
+$("kApp").onclick = () => setKind("app");
+$("kFactory").onclick = () => setKind("factory");
+
+function render() {
+  $("kindText").innerHTML = st.kind === "app"
+    ? "<b>Update</b> keeps the board's settings: its role, pairing and categories. Use it for a board that already runs SkySentinel."
+    : "<b style=\"color:var(--warn)\">Fresh install</b> erases everything on the board, settings included. Use it the first time, on a board that ran other firmware (Meshtastic, Marauder, Bruce), or to start over.";
+  const b = st.board;
+  $("guide").innerHTML = b ? `<b>${b.name}</b>${guideHtml(b.env)}` : `<p style="color:var(--muted); margin:0">Pick a board first.</p>`;
+  $("go").disabled = !b || !b.env || st.busy || !("serial" in navigator);
+}
+
+function inspect(bytes) {
+  if (bytes[0] === 0xE9) return { kind: "app", address: 0x10000, chip: CHIPS[bytes[12] | (bytes[13] << 8)] };
+  for (const off of [0x1000, 0x2000, 0x0])
+    if (bytes.length > off + 16 && bytes[off] === 0xE9 && bytes.subarray(0, off).every((x) => x === 0xFF || x === 0x00))
+      return { kind: "factory", address: 0, chip: CHIPS[bytes[off + 12] | (bytes[off + 13] << 8)] };
+  return null;
+}
+
+$("go").onclick = async () => {
+  const b = st.board;
+  if (!b || st.busy) return;
+  if (st.kind === "factory" && !confirm(`Fresh install erases everything on the ${b.name}, including its settings and pairing. Continue?`)) return;
+  let port;
+  try { port = await navigator.serial.requestPort(); } catch (_) { return; }
+  // A plain ESP32 (CYD, DevKit) has no USB of its own: it shows up through a USB-serial
+  // chip (CH340 / CP2102). Espressif's own USB id means a C5 / S3 board was picked.
+  const vid = port.getInfo?.().usbVendorId;
+  if (b.chip === "ESP32" && vid === 0x303a) {
+    $("log").textContent = "";
+    log(`That port is an ESP32-C5 / ESP32-S3 board (its own USB, Espressif id 303a), probably the master or the Heltec, not the ${b.name}.`);
+    log(`The ${b.name} shows up as "USB Serial" or "CH340" / "CP2102" in the port list. Press Connect and install again and pick that one.`);
+    return;
+  }
+  st.busy = true; render();
+  $("log").textContent = ""; $("bar").style.width = "0%"; $("after").hidden = true; $("chipText").textContent = "";
+  const file = `${b.env}.${st.kind === "app" ? "app" : "factory"}.bin`;
+  let transport = null;
+  try {
+    log(`Downloading ${file}…`);
+    const r = await fetch(FW + file, { cache: "no-store" });
+    if (!r.ok) throw new Error(`couldn't download ${file} (${r.status})`);
+    const data = new Uint8Array(await r.arrayBuffer());
+    const info = inspect(data);
+    if (!info) throw new Error(`${file} isn't an ESP32 firmware image`);
+    const { ESPLoader, Transport } = window.esptool;
+    transport = new Transport(port, false);
+    const terminal = { clean() {}, writeLine: (t) => log(t), write: (t) => log(t) };
+    const loader = new ESPLoader({ transport, baudrate: 460800, terminal });
+    log("Connecting to the board's bootloader…");
+    await loader.main($("manual").checked ? "no_reset" : "default_reset");
+    const chip = loader.chip.CHIP_NAME;
+    $("chipText").textContent = `board says: ${chip}`;
+    if (chip !== info.chip) throw new Error(`This board is an ${chip}, but you picked ${b.name} (${info.chip}). Pick the matching board.`);
+    log(`Writing ${(data.length / 1048576).toFixed(2)} MB at 0x${info.address.toString(16)}…`);
+    await loader.writeFlash({
+      fileArray: [{ data, address: info.address }],
+      flashMode: "keep", flashFreq: "keep", flashSize: "keep", eraseAll: st.kind === "factory", compress: true,
+      reportProgress: (_, w, t) => { $("bar").style.width = `${Math.round((w / t) * 100)}%`; },
+    });
+    log("Done. Restarting the board…");
+    // Restart into the new firmware: hold EN (reset) low with RTS for a moment while
+    // DTR (BOOT) stays released. esptool-js's own hard reset only releases RTS, which
+    // does nothing on boards whose RTS was never raised (the CYD's CH340), so pulse it here.
+    const sig = (o) => transport.device.setSignals(o);
+    await sig({ dataTerminalReady: false, requestToSend: true });
+    await new Promise((r) => setTimeout(r, 120));
+    await sig({ dataTerminalReady: false, requestToSend: false });
+    await new Promise((r) => setTimeout(r, 50));
+    log("If the board doesn't start within a few seconds, press its RST (or EN) button once.");
+    await transport.disconnect();
+    $("after").hidden = false;
+  } catch (err) {
+    const msg = String(err.message || err);
+    log("FAILED: " + msg);
+    if (/Failed to open|already open|NetworkError|InvalidStateError/i.test(msg)) {
+      log("Something else has this port open. Close the SkySentinel console tab (or press its DISCONNECT), stop any serial monitor (sslog.py, PlatformIO, Arduino, screen), then install again.");
+      log("On Linux, a port that never opens can also mean your account isn't in the dialout group.");
+    } else if (/Failed to connect/i.test(msg)) {
+      log($("manual").checked
+        ? "Still no answer. Try a different USB cable (many are charge-only) or USB port, and do the BOOT / RST steps right before pressing Connect and install."
+        : "The board didn't enter download mode by itself. Tick \"I put the board in download mode myself\" below the button: hold BOOT, tap RST, let go of BOOT, then press Connect and install.");
+    } else {
+      log("Stuck on connecting? Hold the board's BOOT button, press Connect and install again, and let go when the bar moves.");
+    }
+    try { await transport?.disconnect(); } catch (_) {}
+  } finally {
+    st.busy = false; render();
+  }
+};
+
+async function init() {
+  try {
+    const r = await fetch(FW + "manifest.json", { cache: "no-store" });
+    if (r.ok) st.manifest = await r.json();
+  } catch (_) {}
+  const m = st.manifest;
+  if (m) {
+    $("buildLine").textContent = `Latest: ${m.version ? m.version + ", " : ""}built ${m.built}.`;
+    $("dlList").innerHTML = m.builds.map((x) => `<div style="margin:4px 0">${x.label}: <a href="${FW}${x.app}" download>update (${x.app})</a> · <a href="${FW}${x.factory}" download>full (${x.factory})</a></div>`).join("");
+  } else {
+    $("dlList").textContent = "No builds published yet.";
+  }
+  const want = new URLSearchParams(location.search).get("board");
+  st.board = BOARDS.find((b) => b.id === want && b.env) || null;
+  renderPick(); render();
+}
+init();
+</script>
+</body>
+</html>

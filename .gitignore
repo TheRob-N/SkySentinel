@@ -1,0 +1,9 @@
+.pio/
+test/host/test_bin
+__pycache__/
+src/common/webui_gz.h
+webui/firmware/
+dist/
+.pytest_cache/
+.vscode/
+*.log

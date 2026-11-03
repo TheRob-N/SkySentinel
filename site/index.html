@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Free, listen-only detector for Flock ALPR cameras, body cams, AirTags and trackers, camera glasses, drones (Remote ID decoded), card skimmers and Wi-Fi attacks, on $10 to $40 ESP32 boards. Install from your browser.">
+<link rel="canonical" href="https://skysentinel.neyhard.com/">
+<meta name="robots" content="index, follow">
+<meta name="author" content="Robert Neyhard">
+<meta name="theme-color" content="#06111D">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="SkySentinel">
+<meta property="og:title" content="SkySentinel: detect surveillance cameras, trackers and drones with ESP32">
+<meta property="og:description" content="Free, listen-only detector for Flock ALPR cameras, body cams, AirTags and trackers, camera glasses, drones (Remote ID decoded), card skimmers and Wi-Fi attacks, on $10 to $40 ESP32 boards. Install from your browser.">
+<meta property="og:url" content="https://skysentinel.neyhard.com/">
+<meta property="og:image" content="https://skysentinel.neyhard.com/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="SkySentinel radar logo: know what's watching">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="SkySentinel: detect surveillance cameras, trackers and drones with ESP32">
+<meta name="twitter:description" content="Free, listen-only detector for Flock ALPR cameras, body cams, AirTags and trackers, camera glasses, drones (Remote ID decoded), card skimmers and Wi-Fi attacks, on $10 to $40 ESP32 boards. Install from your browser.">
+<meta name="twitter:image" content="https://skysentinel.neyhard.com/assets/og.png">
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "SkySentinel", "applicationCategory": "SecurityApplication", "operatingSystem": "ESP32 firmware; web console in Chrome, Edge or Firefox 151+", "description": "Free, listen-only detector for Flock ALPR cameras, body cams, AirTags and trackers, camera glasses, drones (Remote ID decoded), card skimmers and Wi-Fi attacks, on $10 to $40 ESP32 boards. Install from your browser.", "url": "https://skysentinel.neyhard.com/", "image": "https://skysentinel.neyhard.com/assets/og.png", "author": {"@type": "Person", "name": "Robert Neyhard"}, "license": "https://polyformproject.org/licenses/noncommercial/1.0.0", "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}, "featureList": ["Flock ALPR camera detection", "Body camera detection", "AirTag and tracker alerts", "Camera glasses detection", "Drone Remote ID decoding", "Card skimmer Bluetooth detection", "Evil twin and Wi-Fi Pineapple detection", "Wi-Fi beacon spam and deauth flood detection", "Following and lingering alerts", "GPS-stamped detection log"]}</script>
+<title>SkySentinel: detect surveillance cameras, trackers and drones with ESP32</title>
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/site.css">
+<script src="assets/browser.js"></script>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="./"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2"><circle cx="16" cy="16" r="13"/><circle cx="16" cy="16" r="7"/><path d="M16 16 L26 6"/><circle cx="16" cy="16" r="2" fill="currentColor"/></svg><span class="logo"><span class="sky">SKY</span> SENTINEL</span></a>
+  <nav class="nav">
+    <a href="./" aria-current="page">Home</a>
+    <a href="flash.html">Install</a>
+    <a href="app/">Console</a>
+    <a href="docs.html">How-tos</a>
+    <a href="#boards">Boards</a>
+    <a href="docs.html#source">Source</a>
+  </nav>
+</div></header>
+
+<div class="hero"><div class="wrap">
+  <div>
+    <h1 class="logo"><span class="sky">SKY</span> SENTINEL</h1>
+    <p class="lead">Know what's watching. A pocket detector for license-plate cameras, body cams, trackers, camera glasses, drones and card skimmers.</p>
+    <p class="sub">Runs on $10 to $40 ESP32 boards. Listen only: it never transmits to the devices it finds. Free for personal use, source included. No account, no cloud, no app.</p>
+    <div class="ctas">
+      <a class="btn primary" href="flash.html">Install firmware</a>
+      <a class="btn" href="app/">Open the console</a>
+      <a class="btn" href="docs.html">How-tos</a>
+    </div>
+  </div>
+  <svg class="radar" viewBox="0 0 400 400" aria-hidden="true">
+    <defs><radialGradient id="g" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#48C9E8" stop-opacity=".16"/><stop offset="1" stop-color="#48C9E8" stop-opacity="0"/></radialGradient>
+      <linearGradient id="sw" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#48C9E8" stop-opacity="0"/><stop offset="1" stop-color="#48C9E8" stop-opacity=".45"/></linearGradient></defs>
+    <circle cx="200" cy="200" r="190" fill="url(#g)" stroke="#1C3F5E"/>
+    <circle cx="200" cy="200" r="130" fill="none" stroke="#1C3F5E"/>
+    <circle cx="200" cy="200" r="70" fill="none" stroke="#1C3F5E"/>
+    <path d="M200 10 V390 M10 200 H390" stroke="#1C3F5E"/>
+    <g class="sweep"><path d="M200 200 L390 200 A190 190 0 0 0 334 66 Z" fill="url(#sw)"/><path d="M200 200 L390 200" stroke="#48C9E8" stroke-width="2"/></g>
+    <circle cx="270" cy="120" r="7" fill="#FF6B5E"/><circle cx="130" cy="250" r="5" fill="#F2A93B"/>
+    <circle cx="300" cy="260" r="4" fill="#48C9E8"/><circle cx="110" cy="130" r="3" fill="#8AA4BA"/><circle cx="230" cy="320" r="3" fill="#8AA4BA"/>
+    <circle cx="200" cy="200" r="5" fill="#DCE9F3"/>
+  </svg>
+</div></div>
+
+<section id="finds"><div class="wrap">
+  <h2>What it finds</h2>
+  <p class="kicker">Every board listens to Wi-Fi and Bluetooth (and, with the right board, LoRa) and matches what it hears against signatures built from public research and the official IEEE and Bluetooth registries. <a href="docs.html#detects">The full list</a>.</p>
+  <div class="grid g3">
+    <div class="card cat"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="7" width="13" height="10" rx="2"/><path d="M16 10l5-3v10l-5-3"/></svg>
+      <h3>ALPR cameras</h3><p>Flock Safety cameras and Raven gunshot sensors: their Wi-Fi names, Bluetooth IDs and Flock's own registered addresses.</p></div>
+    <div class="card cat"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="6" y="3" width="12" height="18" rx="2"/><circle cx="12" cy="10" r="3"/></svg>
+      <h3>Body cams</h3><p>Axon / TASER, Motorola Solutions and WatchGuard, Digital Ally, Utility BodyWorn, Zepcam.</p></div>
+    <div class="card cat"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg>
+      <h3>Trackers</h3><p>AirTags and Find My tags away from their owner, SmartTags, Tile, Chipolo, Google Find Hub tags. Alerts when one follows you.</p></div>
+    <div class="card cat"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="13" r="4"/><circle cx="17" cy="13" r="4"/><path d="M11 13h2M3 13L2 9M21 13l1-4"/></svg>
+      <h3>Camera glasses</h3><p>Ray-Ban and Oakley Meta, Snap Spectacles, Vuzix.</p></div>
+    <div class="card cat"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="5" cy="5" r="2.5"/><circle cx="19" cy="5" r="2.5"/><circle cx="5" cy="19" r="2.5"/><circle cx="19" cy="19" r="2.5"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M7 7l2 2M17 7l-2 2M7 17l2-2M17 17l-2-2"/></svg>
+      <h3>Drones</h3><p>FAA Remote ID decoded: the drone's serial number, where it is, its height, speed and heading, and where the pilot is standing. Plus DJI DroneID, DJI / Parrot / Skydio radios and drone hotspots.</p></div>
+    <div class="card cat"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18M7 15h4"/></svg>
+      <h3>Card skimmers</h3><p>The cheap serial Bluetooth radios (HC-05, HC-06 and friends) found hidden in gas pumps.</p></div>
+    <div class="card cat"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path d="M9 12l2 2 4-4"/></svg>
+      <h3>Attacks and hacker gear</h3><p>Evil-twin access points (Wi-Fi Pineapple style), Wi-Fi beacon spam, deauth floods, Bluetooth spam bursts, Flipper Zero, Pwnagotchi. Fakes are kept out of the counts.</p></div>
+    <div class="card cat"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 18c3-6 6-9 8-9s5 3 8 9"/><circle cx="12" cy="6" r="2"/></svg>
+      <h3>Following and lingering</h3><p>A device that stays with you across places, or keeps hanging around while you're parked, raises its own alert.</p></div>
+    <div class="card cat"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 16v-4l2-5h12l2 5v4z"/><circle cx="7.5" cy="16.5" r="1.8"/><circle cx="16.5" cy="16.5" r="1.8"/><path d="M4 12h16"/></svg>
+      <h3>Vehicles</h3><p>Teslas, car makers' Wi-Fi hotspots, car stereos and OBD-II dongles. In a moving car, the same vehicle staying behind you raises a following alert.</p></div>
+    <div class="card cat"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="7" y="3" width="10" height="18" rx="2"/><path d="M11 18h2"/></svg>
+      <h3>Phones and everything around</h3><p>Phones, tablets and hotspots, even ones already on Wi-Fi; earbuds with battery levels; routers with security, Wi-Fi generation, load and uptime; which network each device is on; Windows PCs and Xbox; smart-home gear in setup mode.</p></div>
+    <div class="card cat"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 13v8M9 21h6"/><circle cx="12" cy="11" r="2"/><path d="M8 7a6 6 0 0 0 0 8M16 7a6 6 0 0 1 0 8M5 4a10 10 0 0 0 0 14M19 4a10 10 0 0 1 0 14"/></svg>
+      <h3>LoRa and Meshtastic</h3><p>Meshtastic nodes with their names, positions and battery from the public channel; LoRaWAN trackers and sensors by their device IDs.</p></div>
+    <div class="card cat"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
+      <h3>A log with time and place</h3><p>Every find is saved with GPS time and location, in the master's flash and on a CYD's SD card. Opens in Excel or Google My Maps.</p></div>
+  </div>
+</div></section>
+
+<section id="cluster"><div class="wrap">
+  <h2>One board, or a cluster</h2>
+  <p class="kicker">A single ESP32-C5 is a complete detector. Add more boards and they pair to it as nodes over an encrypted ESP-NOW link: the master shares out the work (which radios, which channels), merges what everyone hears, and runs the console. Each kind of board adds something the others can't hear.</p>
+  <svg class="diagram" viewBox="0 0 1000 300" role="img" aria-label="A master board linked to four node boards">
+    <style>.b{fill:#0B1A2C;stroke:#1C3F5E;stroke-width:1.5}.m{fill:#0E2136;stroke:#48C9E8;stroke-width:2}.t{fill:#DCE9F3;font:700 17px system-ui,sans-serif}.s{fill:#8AA4BA;font:14px system-ui,sans-serif}.l{stroke:#48C9E8;stroke-width:1.5;stroke-dasharray:5 5}</style>
+    <path class="l" d="M500 150 L150 60 M500 150 L150 240 M500 150 L850 60 M500 150 L850 240"/>
+    <rect class="m" x="390" y="105" width="220" height="90" rx="8"/><text class="t" x="500" y="140" text-anchor="middle">MASTER: ESP32-C5</text>
+    <text class="s" x="500" y="162" text-anchor="middle">Wi-Fi 2.4 + 5 GHz, BLE, log</text><text class="s" x="500" y="181" text-anchor="middle">console on USB or its own Wi-Fi</text>
+    <rect class="b" x="20" y="20" width="260" height="80" rx="8"/><text class="t" x="150" y="52" text-anchor="middle">Heltec Wireless Tracker</text><text class="s" x="150" y="75" text-anchor="middle">LoRa 915 + GPS time and place</text>
+    <rect class="b" x="20" y="200" width="260" height="80" rx="8"/><text class="t" x="150" y="232" text-anchor="middle">CYD touch screen</text><text class="s" x="150" y="255" text-anchor="middle">dashboard, SD log, Classic BT</text>
+    <rect class="b" x="720" y="20" width="260" height="80" rx="8"/><text class="t" x="850" y="52" text-anchor="middle">ESP32 DevKit</text><text class="s" x="850" y="75" text-anchor="middle">Classic Bluetooth, more Wi-Fi ears</text>
+    <rect class="b" x="720" y="200" width="260" height="80" rx="8"/><text class="t" x="850" y="232" text-anchor="middle">Another C5</text><text class="s" x="850" y="255" text-anchor="middle">covers the channels the master can't</text>
+    <text class="s" x="500" y="225" text-anchor="middle">nodes link to the master over ESP-NOW, encrypted</text>
+  </svg>
+</div></section>
+
+<section id="boards"><div class="wrap">
+  <h2>Supported boards</h2>
+  <p class="kicker">What each board adds to the cluster. Outlined in blue: something only that kind of board brings. Classic Bluetooth needs an original ESP32 (the CYD or a WROOM DevKit); the C5 and S3 chips don't have it.</p>
+  <div class="grid g3" id="boardGrid"></div>
+  <div style="margin-top:18px"><button class="btn small" id="tableBtn">Show the comparison table</button></div>
+  <div class="tablewrap" id="tableWrap" hidden><table class="cmp" id="cmpTable"></table></div>
+</div></section>
+
+<section id="start"><div class="wrap">
+  <h2>Get started in three steps</h2>
+  <div class="grid g3" style="margin-top:20px">
+    <div class="card"><h3>1. Install</h3><p>Plug a board into a desktop running Chrome, Edge or Firefox 151+ and press <a href="flash.html">Install</a>. No software to download.</p></div>
+    <div class="card"><h3>2. Open the console</h3><p>The <a href="app/">console</a> connects over USB. Or join the master's own Wi-Fi from your phone and it opens by itself.</p></div>
+    <div class="card"><h3>3. Add nodes</h3><p>Press <b>PAIR A NODE</b>, hold the new board close, check the 6-digit code matches, ACCEPT. <a href="docs.html#pairing">How pairing works</a>.</p></div>
+  </div>
+  <p class="note" style="margin-top:24px">SkySentinel listens. It records radio signals that devices broadcast publicly and never jams or attacks anything. It only talks to a device if you choose to (the optional ASK button and Bluetooth "ask" scanning, both off by default). Check the laws where you use it, and use what it finds responsibly.</p>
+</div></section>
+
+<footer><div class="wrap">
+  <span>SkySentinel &copy; 2026 Robert Neyhard. Free for personal use: <a href="docs.html#source">source and license</a>.</span>
+  <span id="buildInfo"></span>
+</div></footer>
+
+<script src="assets/boards.js"></script>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const capLabel = Object.fromEntries(CAPS);
+function capText(v) { return v === "soon" ? " (soon)" : typeof v === "string" ? ` (${v})` : ""; }
+$("boardGrid").innerHTML = BOARDS.map((b) => {
+  const adds = Object.entries(b.caps).map(([k, v]) =>
+    `<span class="${b.only.includes(k) ? "only" : ""}" title="${b.only.includes(k) ? "Only this kind of board adds this" : ""}">${capLabel[k]}${capText(v)}</span>`).join("");
+  const status = b.status === "planned" ? `<span class="tag warn">planned</span>` : b.status === "beta" ? `<span class="tag warn">beta</span>` : `<span class="tag ok">supported</span>`;
+  return `<div class="card board ${b.status === "planned" ? "planned" : ""}">
+    <div class="head"><div><h3 style="margin:0">${b.name}</h3><div class="chip">${b.chip} · ${b.roles}</div></div>${status}</div>
+    <p class="why">${b.why}</p>
+    <div class="adds">${adds}</div>
+    ${b.master ? `<p class="why master ${b.master.ok ? "" : "no"}"><b>${b.master.ok ? (b.master.best ? "As master (recommended):" : "As master:") : "Can't be the master."}</b> ${b.master.limits}</p>` : ""}
+    <div class="foot">${b.env ? `<a class="btn small primary" href="flash.html?board=${b.id}">Install</a><a class="btn small" href="docs.html#board-${b.id}">How-to</a>` : `<span class="tag">not flashable yet</span>`}</div>
+  </div>`;
+}).join("");
+
+function renderTable() {
+  const cols = CAPS.map(([k, l]) => `<th>${l}</th>`).join("");
+  $("cmpTable").innerHTML = `<thead><tr><th>Board</th><th>Chip</th><th>Role</th><th>Master</th>${cols}</tr></thead><tbody>` + BOARDS.map((b) =>
+    `<tr><td><b>${b.name}</b>${b.status ? ` <span class="tag warn">${b.status}</span>` : ""}</td><td class="mono">${b.chip}</td><td>${b.roles}</td><td>${!b.master ? "" : b.master.ok ? `<span class="y">✓</span>${b.master.best ? ' <span class="p">best</span>' : ""}` : '<span class="n">–</span>'}</td>` +
+    CAPS.map(([k]) => {
+      const v = b.caps[k];
+      return `<td>${!v ? '<span class="n">–</span>' : v === "soon" ? '<span class="p">soon</span>' : typeof v === "string" ? `<span class="y">✓</span> <span class="p">${v}</span>` : '<span class="y">✓</span>'}</td>`;
+    }).join("") + "</tr>").join("") + "</tbody>";
+}
+$("tableBtn").onclick = () => {
+  const show = $("tableWrap").hidden;
+  if (show) renderTable();
+  $("tableWrap").hidden = !show;
+  $("tableBtn").textContent = show ? "Hide the comparison table" : "Show the comparison table";
+};
+fetch("app/firmware/manifest.json", { cache: "no-store" }).then((r) => r.ok ? r.json() : null)
+  .then((m) => { if (m) $("buildInfo").textContent = `Latest firmware: ${m.version || ""} built ${m.built}`; }).catch(() => {});
+</script>
+</body>
+</html>
