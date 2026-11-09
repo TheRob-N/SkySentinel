@@ -16,7 +16,7 @@ const BOARDS = [
   { id: "heltec", env: "heltec", name: "Heltec Wireless Tracker", chip: "ESP32-S3", roles: "Node · Master · Standalone",
     caps: { wifi24: 1, ble: 1, lora: 1, gps: 1, screen: 1, battery: 1 }, only: ["lora", "gps"],
     master: { ok: true, limits: "Tracks 256 devices at once (no PSRAM). 2.4 GHz only: add a C5 node for 5 GHz. Brings its own LoRa and GPS, so the log gets positions with no extra node. The small screen shows status, not the device list." },
-    why: "Adds LoRa (Meshtastic nodes, LoRaWAN trackers) and GPS, which puts the time and place on every log entry and draws your route." },
+    why: "Adds LoRa (Meshtastic and MeshCore nodes, LoRaWAN trackers) and GPS, which puts the time and place on every log entry and draws your route." },
   { id: "cyd", env: "cyd", name: "CYD / ESP32-32E 2.8\"", chip: "ESP32", roles: "Node + dashboard",
     caps: { wifi24: 1, classic: 1, screen: 1, touch: 1, sd: 1, speaker: 1, gps: "add-on", battery: "32E" }, only: ["touch", "sd"],
     master: { ok: false, limits: "Node only: Classic Bluetooth, the screen and the SD card use nearly all of the original ESP32's memory, leaving no room for the device list and the phone page." },

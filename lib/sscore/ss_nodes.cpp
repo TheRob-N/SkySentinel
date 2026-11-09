@@ -110,9 +110,26 @@ void NodeRegistry::assign(uint16_t category_mask, AssignMode mode) {
   if (cfg_version_ == 0) cfg_version_ = 1;  // 0 means "unassigned" on the node
   const ScanPlan plan = planForCategories(category_mask);
 
+  // Nodes pinned to EVERYTHING scan the whole plan on their own (a node in another
+  // room, or out at the edge of range); the rest share the work between them.
   int online[kMaxNodes];
   int n = 0;
-  for (int i = 0; i < kMaxNodes; ++i) if (nodes_[i].used && nodes_[i].online) online[n++] = i;
+  for (int i = 0; i < kMaxNodes; ++i)
+    if (nodes_[i].used && nodes_[i].online) {
+      if (nodes_[i].force_role != ROLE_ALL) { online[n++] = i; continue; }
+      NodeInfo& node = nodes_[i];
+      node.cfg = Config();
+      node.cfg.cfg_version = cfg_version_;
+      node.cfg.category_mask = category_mask;
+      node.cfg.dwell_ms = plan.dwell_ms;
+      node.cfg.report_ms = (node.caps & CAP_DASH) ? kDashReportMs : kNodeReportMs;
+      node.cfg.rssi_floor = -95;
+      const bool canBle = (node.caps & CAP_BLE) != 0;
+      const bool wifi = plan.channel_mask != 0, ble = canBle && plan.ble_duty_pct > 0;
+      node.cfg.role = wifi && ble ? ROLE_BOTH : wifi ? ROLE_WIFI : ROLE_BLE;
+      node.cfg.ble_duty_pct = ble ? plan.ble_duty_pct : 0;
+      node.cfg.channel_mask = (node.caps & CAP_WIFI5) ? plan.channel_mask : (plan.channel_mask & kMask24);
+    }
   if (n == 0) return;
 
   const bool needWifi = plan.channel_mask != 0;
@@ -150,7 +167,7 @@ void NodeRegistry::assign(uint16_t category_mask, AssignMode mode) {
     node.cfg.cfg_version = cfg_version_;
     node.cfg.category_mask = category_mask;
     node.cfg.dwell_ms = plan.dwell_ms;
-    node.cfg.report_ms = 1000;
+    node.cfg.report_ms = (node.caps & CAP_DASH) ? kDashReportMs : kNodeReportMs;
     node.cfg.rssi_floor = -95;
     const bool canBle = (node.caps & CAP_BLE) != 0;
     const uint64_t myChans = (node.caps & CAP_WIFI5) ? plan.channel_mask : (plan.channel_mask & kMask24);
@@ -191,6 +208,7 @@ const char* roleName(uint8_t role) {
     case ROLE_WIFI: return "wifi";
     case ROLE_BLE: return "ble";
     case ROLE_BOTH: return "both";
+    case ROLE_ALL: return "all";
     default: return "auto";
   }
 }

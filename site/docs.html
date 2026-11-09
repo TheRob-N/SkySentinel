@@ -108,7 +108,7 @@
         make and model, how long since it restarted, which devices are talking to it, and a channel chart.</li>
       <li><b>Bluetooth details:</b> AirPods and Beats battery levels, Apple activity, iBeacon and Eddystone IDs, Fast Pair, thermometers and BTHome sensors,
         Windows PCs / Xbox / Surface by type, Matter smart-home gear in setup mode. ASK reads a device's own name, maker, model, firmware and battery.</li>
-      <li><b>Meshtastic and LoRaWAN</b> (Heltec): node names, positions, battery and packet types from the public channel; LoRaWAN devices by their IDs.</li>
+      <li><b>Meshtastic, MeshCore and LoRaWAN</b> (Heltec): Meshtastic node names, positions, battery and packet types from the public channel; MeshCore companions, repeaters and room servers from their adverts; LoRaWAN devices by their IDs. AUTO takes turns, or pin the Heltec to one preset (CLUSTER &gt; EDIT &gt; LORA), including a custom Meshtastic frequency slot.</li>
       <li><b>Distance:</b> a rough range from signal strength, using the device's own transmit power when it says it.</li>
       <li><b>Networks phones look for</b> (opt-in, off by default, never logged).</li>
     </ul>
@@ -178,7 +178,7 @@
     <p>Use the port labeled <b>USB</b>. The only supported chip with 5 GHz Wi-Fi, so it makes the best master. LED colors: slow blue = waiting to be paired,
       slow green = pairing open, white flash = identify.</p>
     <h3 id="board-heltec">Heltec Wireless Tracker</h3>
-    <p>Adds LoRa 915 MHz (Meshtastic nodes, LoRaWAN trackers) and GPS. With a GPS fix the master stamps every log entry with the time and place.
+    <p>Adds LoRa 915 MHz (Meshtastic and MeshCore nodes, LoRaWAN trackers) and GPS. With a GPS fix the master stamps every log entry with the time and place.
       Give it a view of the sky; a cold start takes from 30 seconds to a few minutes. Its card on the master shows <b>GPS 3D &middot; 9 sats</b> when locked.</p>
     <h3 id="board-cyd">CYD and ESP32-32E</h3>
     <ul>

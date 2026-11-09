@@ -10,6 +10,16 @@
 
 namespace ss {
 
+// How often a node sends its sightings to the master (it sends sooner if its batch fills).
+// Was 1 s. Every send is a chance for esp-idf #19269 (a frame stuck in the Wi-Fi driver,
+// node restarts), and Bluetooth now steps aside briefly for each send, which costs an S3
+// part of its listening (20 pauses/min at 3 s: ~160 adverts/min vs ~400 without). 5 s:
+// 12 pauses/min; sightings arrive up to 4 s later.
+constexpr uint16_t kNodeReportMs = 5000;
+// A dashboard (CYD) checks in with each report and gets its screen data back in reply, so
+// it keeps 1 s: at 3 s its screen fell back to "Waiting for dashboard data" now and then.
+constexpr uint16_t kDashReportMs = 1000;
+
 struct NodeInfo {
   bool used = false;
   bool online = false;
@@ -27,8 +37,12 @@ struct NodeInfo {
   Heartbeat hb;
   Config cfg;                // what we assigned
   // Set by you on the master (kept across reboots by the master, keyed by node id):
-  uint8_t force_role = ROLE_AUTO;  // ROLE_BLE / ROLE_WIFI / ROLE_BOTH pin the job
+  uint8_t force_role = ROLE_AUTO;  // ROLE_BLE / ROLE_WIFI / ROLE_BOTH pin the job; ROLE_ALL = everything, on its own
   int8_t screen = -1;              // -1 follow the master's setting, 0 off, 1 on
+  uint8_t lora_mode = 0;           // LoRa boards: ss_lora.h LoraMode (0 auto)
+  uint8_t lora_slot = 0;           //   Meshtastic frequency slot, 1-based (0 = the preset's default)
+  int8_t link_mode = -1;           // link to the master: -1 follow the master's LR setting, 0 normal,
+                                   //   1 Long Range 250 kbit/s, 2 Long Range 500 kbit/s
   char label[kMaxLabel + 1] = {0};
 };
 

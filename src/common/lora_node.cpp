@@ -28,6 +28,9 @@ static volatile uint16_t* cats_ = nullptr;
 static bool ready_ = false;
 static Stats stats_;
 static portMUX_TYPE statsMux = portMUX_INITIALIZER_UNLOCKED;
+static volatile uint8_t mode_ = LM_AUTO, slot_ = 0;
+static volatile bool modeChanged_ = false;
+static const char* channel_ = "LongFast";  // Meshtastic channel name for reading the public channel
 
 static void count(uint32_t Stats::*field) {
   portENTER_CRITICAL(&statsMux);
@@ -41,9 +44,31 @@ static bool apply(const LoraPreset& p) {
          radio.setSyncWord(p.sync) == RADIOLIB_ERR_NONE && radio.setPreambleLength(p.preamble) == RADIOLIB_ERR_NONE;
 }
 
-// Reads a received packet and hands it on. Meshtastic first when listening there,
-// LoRaWAN when sweeping; anything else is only counted.
-static void handlePacket(bool meshMode) {
+enum Listen : uint8_t { L_MESHTASTIC, L_MESHCORE, L_LORAWAN };
+
+static void meshCorePacket(const uint8_t* buf, size_t len, int8_t rssi) {
+  MeshCorePacket m;
+  if (!parseMeshCore(buf, len, m)) { count(&Stats::other); return; }
+  count(&Stats::meshcore);
+  if (m.type != MCT_ADVERT) return;  // only adverts say who sent them
+  MeshCoreAdvert a;
+  if (!parseMeshCoreAdvert(buf + m.payload_off, m.payload_len, a)) return;
+  count(&Stats::mc_adverts);
+  const Sighting s = makeMeshCoreSighting(m, a, rssi);
+  if (a.name[0]) sink_(s, a.name, (uint8_t)strnlen(a.name, kMaxName), NAME_DEVICE);
+  if (a.has_pos && (a.lat_e6 || a.lon_e6)) {
+    char pos[kMaxName + 1];
+    const long la = labs((long)a.lat_e6), lo = labs((long)a.lon_e6);
+    const int l = snprintf(pos, sizeof(pos), "%s%ld.%06ld,%s%ld.%06ld,0", a.lat_e6 < 0 ? "-" : "", la / 1000000, la % 1000000,
+                           a.lon_e6 < 0 ? "-" : "", lo / 1000000, lo % 1000000);
+    sink_(s, pos, (uint8_t)(l < (int)kMaxName ? l : (int)kMaxName), NAME_POS);
+  }
+  if (!a.name[0] && !a.has_pos) sink_(s, "meshcore:advert", 15, NAME_MESH);
+}
+
+// Reads a received packet and hands it on, parsed as whatever we're listening to;
+// anything that doesn't parse is only counted.
+static void handlePacket(Listen what) {
   uint8_t buf[256];
   const size_t len = radio.getPacketLength();
   const int state = radio.readData(buf, len > sizeof(buf) ? sizeof(buf) : len);
@@ -51,7 +76,11 @@ static void handlePacket(bool meshMode) {
   if (state != RADIOLIB_ERR_NONE) return;
   count(&Stats::packets);
   const int8_t rssi = (int8_t)radio.getRSSI();
-  if (meshMode) {
+  if (what == L_MESHCORE) {
+    meshCorePacket(buf, len > sizeof(buf) ? sizeof(buf) : len, rssi);
+    return;
+  }
+  if (what == L_MESHTASTIC) {
     MeshHeader h;
     if (parseMeshtastic(buf, len, h)) {
       count(&Stats::meshtastic);
@@ -60,7 +89,7 @@ static void handlePacket(bool meshMode) {
       uint8_t plain[256];
       MeshInfo mi;
       const size_t n = len > 16 ? (len > sizeof(buf) ? sizeof(buf) : len) - 16 : 0;
-      const bool readable = meshDecryptDefault(h, stats_.listening, buf + 16, n, plain) && decodeMeshData(plain, n, mi);
+      const bool readable = meshDecryptDefault(h, channel_, buf + 16, n, plain) && decodeMeshData(plain, n, mi);
       if (readable) {
         count(&Stats::mesh_read);
         if (mi.port == MP_NODEINFO) {
@@ -88,7 +117,7 @@ static void handlePacket(bool meshMode) {
       // Anything else: what kind of packet it was, so the details can say why there's no
       // name yet ("telemetry on LongFast", "a private channel we can't read").
       char note[24];
-      const int l = readable ? snprintf(note, sizeof(note), "%s:%lu", stats_.listening, (unsigned long)mi.port)
+      const int l = readable ? snprintf(note, sizeof(note), "%s:%lu", channel_, (unsigned long)mi.port)
                              : snprintf(note, sizeof(note), "private:%02X", h.channel_hash);
       sink_(s, note, (uint8_t)l, NAME_MESH);
       return;
@@ -112,15 +141,28 @@ static void handlePacket(bool meshMode) {
   count(&Stats::other);
 }
 
-// Listens on one Meshtastic preset for `ms`, taking packets as they land.
-static void listenMesh(const LoraPreset& p, uint32_t ms) {
-  if (!apply(p)) return;
+static void setListening(const LoraPreset& p, uint16_t slot) {
+  portENTER_CRITICAL(&statsMux);
   stats_.listening = p.name;
+  stats_.mhz = p.mhz;
+  stats_.slot = slot;
+  portEXIT_CRITICAL(&statsMux);
+}
+
+// Listens on one preset (Meshtastic or MeshCore) for `ms`, taking packets as they land.
+// Stops early when the mode is changed.
+static void listenOn(const LoraPreset& p, uint32_t ms) {
+  if (!apply(p)) return;
+  const Listen what = p.sync == kMeshCoreUs.sync ? L_MESHCORE : L_MESHTASTIC;
+  if (what == L_MESHTASTIC) channel_ = p.name;
+  // Meshtastic: which frequency slot this is (1-based, as the Meshtastic app numbers them)
+  const uint16_t slot = what == L_MESHTASTIC ? (uint16_t)((p.mhz - 902.0f - p.bw_khz / 2000.0f) / (p.bw_khz / 1000.0f) + 1.5f) : 0;
+  setListening(p, slot);
   radio.startReceive();
   const uint32_t until = millis() + ms;
-  while ((int32_t)(millis() - until) < 0) {
+  while ((int32_t)(millis() - until) < 0 && !modeChanged_) {
     if (digitalRead(SS_LORA_DIO1)) {
-      handlePacket(true);
+      handlePacket(what);
       radio.startReceive();
     }
     vTaskDelay(pdMS_TO_TICKS(5));
@@ -131,11 +173,12 @@ static void listenMesh(const LoraPreset& p, uint32_t ms) {
 // LoRaWAN: 8 uplink channels x SF7-10. Channel-activity detection on each pair is a
 // few ms; when something is there, receive it.
 static void sweepLoraWan(uint32_t ms) {
-  stats_.listening = "LoRaWAN";
   LoraPreset p = {"LoRaWAN", 0, 125.0f, 7, 5, 0x34, 8};
+  p.mhz = loraWanUplinkMhz(0);
+  setListening(p, 0);
   const uint32_t until = millis() + ms;
   static uint8_t ch = 0, sf = 7;
-  while ((int32_t)(millis() - until) < 0) {
+  while ((int32_t)(millis() - until) < 0 && !modeChanged_) {
     p.mhz = loraWanUplinkMhz(ch);
     p.sf = sf;
     if (apply(p) && radio.scanChannel() == RADIOLIB_LORA_DETECTED) {
@@ -143,7 +186,7 @@ static void sweepLoraWan(uint32_t ms) {
       radio.startReceive();
       const uint32_t wait = millis() + 600;  // longest SF10 uplink in this band ~ 400 ms
       while ((int32_t)(millis() - wait) < 0 && !digitalRead(SS_LORA_DIO1)) vTaskDelay(pdMS_TO_TICKS(2));
-      if (digitalRead(SS_LORA_DIO1)) handlePacket(false);
+      if (digitalRead(SS_LORA_DIO1)) handlePacket(L_LORAWAN);
       radio.standby();
     }
     if (++sf > 10) { sf = 7; ch = (uint8_t)((ch + 1) & 7); }
@@ -159,11 +202,35 @@ static void loraTask(void*) {
       vTaskDelay(pdMS_TO_TICKS(500));
       continue;
     }
-    listenMesh(kMeshLongFast, 20000);
-    listenMesh(kMeshMediumFast, 10000);
-    sweepLoraWan(10000);
+    modeChanged_ = false;
+    const uint8_t mode = mode_;
+    const uint16_t slot = slot_;
+    LoraPreset p;
+    if (mode == LM_AUTO) {
+      // Turns: the busiest first and longest.
+      listenOn(kMeshLongFast, 20000);
+      if (!modeChanged_) listenOn(kMeshMediumFast, 10000);
+      if (!modeChanged_) listenOn(kMeshCoreUs, 10000);
+      if (!modeChanged_) sweepLoraWan(10000);
+    } else if (mode == LM_LORAWAN) {
+      sweepLoraWan(30000);
+    } else if (loraModePreset(mode, slot, p)) {
+      listenOn(p, 30000);
+    } else {
+      vTaskDelay(pdMS_TO_TICKS(500));
+    }
   }
 }
+
+void setMode(uint8_t mode, uint8_t slot) {
+  if (mode >= LM_COUNT) mode = LM_AUTO;
+  if (mode == mode_ && slot == slot_) return;
+  mode_ = mode;
+  slot_ = slot;
+  modeChanged_ = true;
+}
+uint8_t mode() { return mode_; }
+uint8_t slot() { return slot_; }
 
 bool begin(Sink sink, volatile uint16_t* category_mask) {
   sink_ = sink;

@@ -51,7 +51,8 @@ class EspNowLink {
   // setPeerLongRange() picks what we *send* to one peer. Remembered, so it survives
   // the peer being removed and added again.
   bool lrCapable() const { return lr_rx_; }
-  bool setPeerLongRange(const uint8_t mac[6], bool on);
+  // rate: -1 = the link-wide rate (setLrFast), 0 = 250 kbit/s, 1 = 500 kbit/s for this peer.
+  bool setPeerLongRange(const uint8_t mac[6], bool on, int8_t rate = -1);
   bool peerLongRange(const uint8_t mac[6]) const;
   // Rate for broadcasts (a node calling for its master alternates).
   void setBroadcastLongRange(bool on);
@@ -83,9 +84,11 @@ class EspNowLink {
   bool ensureBroadcastPeer();
   void enableLrRx();
   bool applyRate(const uint8_t mac[6], bool lr);
+  bool peerFast(const uint8_t mac[6]) const;
   bool lr_rx_ = false;
   bool lr_fast_ = false;
   uint8_t lr_peers_[8][6] = {};
+  int8_t lr_rate_[8] = {-1, -1, -1, -1, -1, -1, -1, -1};  // per peer: -1 link-wide, 0 250, 1 500
   uint8_t n_lr_ = 0;
 
   static EspNowLink* self_;

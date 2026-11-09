@@ -10,6 +10,7 @@
 namespace ss {
 
 bool g_jsonOn = true;
+volatile uint32_t g_usbWriteMs = 0;
 bool g_uiOn = false;
 bool g_webOn = false;
 OutTee Out;
@@ -31,6 +32,7 @@ size_t OutTee::write(const uint8_t* buf, size_t len) {
   // fully go through, stop writing to USB for 2 s, then try again.
   static uint32_t usbSkipUntil = 0;
   if ((int32_t)(millis() - usbSkipUntil) >= 0) {
+    g_usbWriteMs = millis() | 1;
     if (Serial.write(buf, len) < len) usbSkipUntil = millis() + 2000;
   }
   if (!sink_ || !g_webOn) { line_ = ""; return len; }
@@ -113,6 +115,12 @@ void emitDevice(const Device& d, const char* why) {
   if (d.spoofed) Out.print(",\"spoofed\":true");
   if (d.alias_of) Out.printf(",\"alias_of\":%lu", (unsigned long)d.alias_of);
   if (d.aliases) Out.printf(",\"aliases\":%u", d.aliases);
+  {
+    int8_t br;
+    uint8_t cnt;
+    const int b = bestNode(d, millis(), 60000, &br, &cnt);
+    if (b >= 0) Out.printf(",\"nb\":[%d,%d,%u]", b, br, cnt);
+  }
   Out.print(",\"nodes\":[");
   bool first = true;
   for (uint8_t i = 0; i < kMaxNodes; ++i) {
@@ -244,6 +252,20 @@ void emitDeviceInfo(const DeviceTable& table, uint32_t id, uint32_t now_ms) {
       Out.print("]");
     }
   }
+  // Every radio that has heard it: [slot, rssi, seconds ago]
+  Out.print(",\"heard\":[");
+  {
+    bool f = true;
+    table.forEach([&](const Device& d) {
+      if (d.id != id) return;
+      for (uint8_t i = 0; i < kMaxNodes; ++i) {
+        if (d.node_rssi[i] == -127 || !d.node_ms[i]) continue;
+        Out.printf("%s[%u,%d,%lu]", f ? "" : ",", i, d.node_rssi[i], (unsigned long)((now_ms - d.node_ms[i]) / 1000));
+        f = false;
+      }
+    });
+  }
+  Out.print("]");
   Out.print(",\"probes\":[");
   bool first = true;
   if (g_notes) g_notes->forEach(id, Notes::TAG_PROBE, now_ms, [&](const char* t, uint32_t age) {
@@ -356,6 +378,12 @@ void emitDeviceList(const DeviceTable& table, uint32_t now_ms, size_t max_device
                   d.conf, d.rssi_last, d.rssi_max, (unsigned long)((now_ms - d.last_ms) / 1000), d.rotations,
                   d.radio == 1 ? "w" : (d.radio == 2 ? "b" : (d.radio == 3 ? "c" : (d.radio == 4 ? "l" : "o"))), (unsigned long)d.hits, d.channel, d.flags);
     if (d.aliases) Out.printf(",\"al\":%u", d.aliases);
+    {  // the node that hears it best: [slot, rssi, how many nodes heard it in the last minute]
+      int8_t br;
+      uint8_t cnt;
+      const int b = bestNode(d, now_ms, 60000, &br, &cnt);
+      if (b >= 0) Out.printf(",\"nb\":[%d,%d,%u]", b, br, cnt);
+    }
     if (d.company != 0xFFFF) Out.printf(",\"co\":%u", d.company);
     if (d.places > 1) Out.printf(",\"pl\":%u", d.places);
     if (d.follow_alerted) Out.print(",\"fo\":1");

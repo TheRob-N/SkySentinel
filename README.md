@@ -1,4 +1,4 @@
-# SkySentinel 2.0
+# SkySentinel 2.1
 
 **Know what's watching.** A listen-only detector for surveillance gear and everyday radio
 devices: Flock ALPR cameras, body cams, AirTags and other trackers, camera glasses, drones
@@ -8,6 +8,11 @@ own Wi-Fi) and on an optional touch dashboard.
 
 > **2.0 is a ground-up rewrite.** The original single-board CYD sketch (v0.5.9) lives on the
 > [`legacy-cyd`](../../tree/legacy-cyd) branch and the `v0.5.9` tag.
+
+**New in 2.1:** MeshCore and a LoRa channel picker on the Heltec, per-node link (LR or
+normal) and an EVERYTHING job for outposts, "which node hears it" in the device list,
+about 6 to 7 times more Bluetooth heard by C5 and Heltec boards, and much better
+recovery from a known ESP-IDF radio bug. See [CHANGELOG.md](CHANGELOG.md).
 
 - **Install from your browser:** https://skysentinel.neyhard.com (no toolchain needed)
 - **How-tos:** https://skysentinel.neyhard.com/docs.html
@@ -71,7 +76,7 @@ pio run -e c5 -t upload       # any C5 board (DevKitC-1 today)
 pio run -e v8 -t upload       # Marauder V8 (PSRAM build, defaults to master)
 pio run -e classic -t upload  # original ESP32 (WROOM-32 DevKit): Classic Bluetooth node
 pio run -e cyd -t upload      # CYD / ESP32-32E: Classic node + touch dashboard
-pio run -e heltec -t upload   # Heltec Wireless Tracker: LoRa node (Meshtastic, LoRaWAN)
+pio run -e heltec -t upload   # Heltec Wireless Tracker: LoRa node (Meshtastic, MeshCore, LoRaWAN)
 make -C test/host             # host tests
 python3 tools/test_ssproto.py # Python vs C++, byte for byte
 ```
@@ -223,10 +228,22 @@ Categories screen) and assigns roles:
   all of them and signal strength can be compared for sector direction.
 - **BLE-only categories** (e.g. body cams only): Wi-Fi hopping turns off and every
   node scans BLE 100%.
+- **EVERYTHING** (a node's JOB, CLUSTER → EDIT): that node scans the whole plan on its
+  own, outside the split; the others share the work as if it weren't there. For a node in
+  another room or out at the edge.
 
-Nodes hop channels, then every second return to channel 6, send batched sightings
-(9 per frame, repeats collapsed), names, flood events, and a heartbeat every 5 s.
-Each heartbeat gets the CONFIG back, which doubles as the keep-alive.
+**Sharing one radio between Wi-Fi and Bluetooth.** An ESP32 has one radio, so a board
+doing both gives Bluetooth a share (e.g. 35%). On the S3 (Heltec) and classic ESP32 that's
+the usual BLE scan window (35 ms of every 100). **The ESP32-C5 hears almost nothing that
+way** (2 to 3% of full-time, measured on two boards with `bletest`), so a C5 gives
+Bluetooth its share as blocks of time instead: full-time listening for 3.5 s of every 10,
+with Wi-Fi parked on channel 6, then Wi-Fi hops with the radio to itself. A C5 master gets
+1.5 s of every 10, since node frames that arrive during its Bluetooth go unanswered.
+
+Nodes hop channels, then every 5 seconds (a dashboard CYD: every second) return to
+channel 6, send batched sightings (9 per frame, repeats collapsed; sooner if the batch
+fills), names, flood events, and a heartbeat every 5 s. Each heartbeat gets the CONFIG
+back, which doubles as the keep-alive.
 
 ## Serial commands
 
@@ -242,6 +259,16 @@ skimmer 0x40, pentest 0x80, phone 0x100, audio 0x200, wearable 0x400, other_ble
 
 `python3 tools/ssmon.py /dev/ttyACM0` (needs `pip install pyserial`) is a plain
 terminal view of the same stream.
+
+**Logging a cluster:** `tools/sslog.py <port> ~/name.log` keeps a board's output in a file
+(status once a minute, everything else as it comes) and reconnects by itself. To send that
+board a command, write it to the logger's mailbox, `~/name.cmd`
+(`echo status >> ~/master.cmd`), instead of opening the port again: on the C5's built-in
+USB a second program on the port has left the board's USB output stuck until a reset.
+`tools/sscheck.sh` reads the logs (`master.log`, `devkit.log`, `cyd.log` in your home
+folder) and prints one health summary: per-node loss, restarts and why, the master's USB
+and memory. `bletest` (any C5 / S3 board) runs a 3-minute Bluetooth self-test and prints
+how much it hears with Wi-Fi parked, hopping and scanning; use it on a new board.
 
 JSON lines: `{"t":"status",...}` every second (role, setup, scan plan, nodes, now/total
 per category, link stats), `{"t":"devs",...}` the live device list while the web UI is
@@ -336,6 +363,8 @@ A device's detail window shows everything its broadcasts say openly:
 - **Matter devices in setup mode** show their vendor and product IDs.
 - **Meshtastic:** name card, position, battery, and the last packet type (or "private
   channel", "direct message") when the contents can't be read.
+- **MeshCore:** companions, repeaters, room servers and sensors from their adverts:
+  name, kind, position (when shared) and how many repeater hops away.
 - **LIVE DEVICES** shows the last 1 min, 5 min, 15 min or 1 hour (`list window <s>`).
 - **Drone Remote ID, decoded** (Bluetooth and Wi-Fi, C5 / V8 / Heltec): the serial or
   registration number, aircraft type, where the drone is (map link), height, speed and
@@ -516,13 +545,42 @@ fix" to the events list and the CYDs.
 `pio run -e heltec -t upload`. The Heltec Wireless Tracker is an ESP32-S3 with an
 SX1262 LoRa radio and GNSS. It runs the same firmware as the C5 (Bluetooth LE and
 2.4 GHz Wi-Fi, any role, defaults to **node**) plus a 915 MHz listener that never
-transmits. It takes turns, since one LoRa radio hears one setting at a time:
+transmits. One LoRa radio hears one setting at a time, so on **AUTO** (the default)
+it takes turns:
 
 | Slice | Listens for | Settings |
 |---|---|---|
 | 20 s | Meshtastic LongFast (US default) | 906.875 MHz, SF11, 250 kHz, sync 0x2B |
 | 10 s | Meshtastic MediumFast | 913.125 MHz, SF9, 250 kHz |
+| 10 s | MeshCore (US/Canada recommended) | 910.525 MHz, SF7, 62.5 kHz, CR 4/5, sync 0x12 |
 | 10 s | LoRaWAN uplinks (sensors, trackers) | 903.9 to 905.3 MHz (US915 sub-band 2), SF7 to 10, activity scan |
+
+Or pin it to one, to hear everything there: on the master's page CLUSTER > EDIT >
+**LORA** (saved on the master, sent to the node), or `node <ID> lora <mode> [slot]` in
+the console. A standalone or master Heltec takes `lora <mode> [slot]` directly (or
+SETTINGS > THIS BOARD'S LORA RADIO). Modes: `auto`, the Meshtastic presets
+`longfast`, `mediumfast`, `mediumslow`, `longslow`, `longmod`, `shortfast`,
+`shortslow`, `shortturbo`, then `meshcore` and `lorawan`. For a Meshtastic preset,
+`slot` is the frequency slot a mesh moved to (1-based, as the Meshtastic app shows
+it); leave it out for the preset's usual one.
+
+| Preset | Default slot | US frequency |
+|---|---|---|
+| LongFast | 20 | 906.875 MHz |
+| MediumFast | 45 | 913.125 MHz |
+| MediumSlow | 52 | 914.875 MHz |
+| ShortFast | 68 | 918.875 MHz |
+| ShortSlow | 75 | 920.625 MHz |
+| ShortTurbo | 50 | 926.750 MHz (500 kHz) |
+| LongSlow | 27 | 905.3125 MHz (125 kHz) |
+| LongModerate | 6 | 902.6875 MHz (125 kHz) |
+
+MeshCore nodes show by the first 6 bytes of their public key (MeshCore shows the
+same prefix) once they send an **advert**: the name, kind (companion, repeater, room
+server, sensor), position if the owner shares it, and repeater hops away. Repeaters
+advert every few hours; companions when the owner sends one. Other MeshCore traffic
+only carries 1-byte hashes, so it is counted (status, RADIO line) but not turned into
+devices. The advert signature isn't checked.
 
 Meshtastic nodes show as `!a1b2c3d4` with how many hops away they are ("direct" means
 the signal strength is theirs; relayed means it's the relay's; "via internet" means it
@@ -536,8 +594,10 @@ which every Meshtastic radio ships with and anyone can read), the Heltec also de
 a map link in the node's details. Text messages are recognised but never shown or
 logged. Private channels and LoRaWAN data stay unreadable.
 
-The MediumFast frequency comes from Meshtastic's channel-name hash (the same
-calculation gives LongFast's documented 906.875 MHz). Pins follow Meshtastic's
+The preset frequencies come from Meshtastic's channel-name hash (the same
+calculation gives LongFast's documented 906.875 MHz). LongFast and MediumFast are
+tested on the air; the other presets and MeshCore are built from the protocols'
+published settings. Pins follow Meshtastic's
 variant for this board (SX1262 NSS 8, SCK 9, MOSI 10, MISO 11, RST 12, BUSY 13,
 DIO1 14, TCXO 1.8 V).
 
@@ -573,12 +633,20 @@ listens for LR; the setting switches what's *sent*:
 - The master uses LR only with nodes whose heartbeat says they can (their CLUSTER card
   shows **LR**); the others stay on the normal link.
 - A node told to use LR calls for a lost master in both modes, in turns, so turning the
-  setting off (or a different master) never strands it.
+  setting off (or a different master) never strands it. It remembers this across its own
+  restarts, so a node out at the edge that restarts while the master is away still calls
+  over LR; the master answers a joining node in both modes too.
 - If the master's own radio can't do LR, the setting says so and stays off.
 
 **Speed:** **500 kbit/s** (the default) or **250 kbit/s** (the farthest reach), under
 Long Range speed in the same panel, or `link lr rate 500|250`. The master sends the choice
 to every node with its orders. Serial: `link lr on|off`.
+
+**Per node:** CLUSTER → EDIT → **LINK TO THE MASTER** (or `node <ID> link
+auto|normal|lr250|lr500`) overrides this for one node: FOLLOW MASTER (the default),
+NORMAL, LR 250 or LR 500. Mix them freely, e.g. the office nodes on NORMAL, a node across
+the house on LR 500 and one out by the road on LR 250. The master sends each node at its
+own rate; every board hears both LR speeds and normal frames.
 
 **Known issue: brief automatic reconnects.** ESP-IDF's Wi-Fi driver sometimes drops an
 outgoing ESP-NOW frame without reporting it ([esp-idf #19269](https://github.com/espressif/esp-idf/issues/19269),
@@ -589,9 +657,15 @@ Bluetooth and Wi-Fi as normal:
 
 | Link | Stuck-link events |
 |---|---|
-| Normal (LR off) | none seen |
+| Normal (LR off) | rare; see below |
 | LR 500 kbit/s | about one every several hours |
 | LR 250 kbit/s | one every 10 to 45 minutes |
+
+The normal link isn't immune. On the Heltec it depended on whether Bluetooth was scanning
+while the node sent: about one an hour with Bluetooth running during sends, about one every
+5 hours when it paused for the whole reply window (which cost most of its Bluetooth). Since
+2.1, Bluetooth steps aside only while the frames leave (a few ms) and nodes report every
+5 s: about one a day or less.
 
 A node notices within 1.5 s (frames handed to the radio that never finish) and restarts
 itself; it's back in the cluster a few seconds later, and its log says
@@ -599,7 +673,17 @@ itself; it's back in the cluster a few seconds later, and its log says
 the whole Wi-Fi driver, was tried and didn't recover cleanly (the refusals continued and
 memory leaked), so a quick restart it is, until Espressif fixes the driver. Nodes also never
 change Wi-Fi channel while frames to the master are still in flight: leaving with LR
-frames waiting made the problem several times worse.
+frames waiting made the problem several times worse. The card shows the restart as
+**last start: stuck_tx**.
+
+Classic ESP32 boards (CYD, DevKit) get it too, more slowly: each lost frame keeps a slot,
+and a CYD went a day losing more and more of its sends (9% loss) without ever restarting.
+Since 2.1 they restart after 5 s of stuck frames (longer than the C5/S3's 1.5 s, because
+Classic Bluetooth inquiry can hold the radio for over a second), and their status shows
+`in_flight`.
+
+**Which link for which node:** NORMAL for anything near the master, LR only for nodes
+that need the reach. LR gains a nearby node nothing.
 
 ## Cluster view and node screens
 
@@ -633,7 +717,9 @@ inverted or the picture is shifted, `SS_TFT_INVERT` and `SS_TFT_COL_OFFSET` /
 | Setting | Command | What it does |
 |---|---|---|
 | Name | `node ACDC label Truck rear` (`-` clears) | Shown on its card and its own screen |
-| Job | `node ACDC role auto\|ble\|wifi\|both` | Pin its job; AUTO lets the master decide |
+| Job | `node ACDC role auto\|ble\|wifi\|both\|all` | Pin its job; AUTO lets the master decide. EVERYTHING (`all`): scans every channel and Bluetooth on its own; the other nodes share the work as if it weren't there. For a node in another room or out at the edge of range |
+| Link | `node ACDC link auto\|normal\|lr250\|lr500` | Its link to the master (see Long Range); `auto` follows the master's setting |
+| LoRa | `node ACDC lora <mode> [slot]` | What a LoRa board listens to (see LoRa node) |
 | Screen | `node ACDC screen on\|off\|auto` | Overrides the master's node-screens setting |
 | Identify | `node ACDC identify` | Screen flashes THIS ONE (C5: RGB LED blinks) for 10 s |
 | Reboot | `node ACDC reboot` | Restarts it |
@@ -641,6 +727,14 @@ inverted or the picture is shifted, `SS_TFT_INVERT` and `SS_TFT_COL_OFFSET` /
 
 The master keeps these by node ID (they survive reboots on both sides) and sends the
 name with every CONFIG, so a node that rejoins gets it back.
+
+### Which node hears it
+
+With nodes in different rooms (or out at the edge), the strongest one is nearest the
+device. The device list's **NODE** column shows the board that hears it best right now
+and its signal ("Remote C5 (-62) +2" = two more boards hear it too); new-device events
+say "heard by ..."; a device's details list every board that has heard it, strongest
+first, with how long ago.
 
 ## Detection log
 

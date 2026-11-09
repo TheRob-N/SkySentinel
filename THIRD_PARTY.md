@@ -19,6 +19,10 @@ Signature research credits (Flock research, DeFlock, ouispy-detector, flock-you,
 GainSec, the Nearby Glasses app, the DJI DroneID research) are listed in
 `lib/sscore/ss_sigdata.h`.
 
+The MeshCore packet and advert layout (`lib/sscore/ss_lora.cpp`) follows MeshCore's
+published format; MeshCoreSniffer (SarahRoseLives, MIT) was the reference for
+reading it. No code from it is included.
+
 The LGPL-2.1 parts of the Arduino core are linked into the firmware. Their source is
 at https://github.com/espressif/arduino-esp32, and this project's full source is
 published with every release, so you can rebuild the firmware with a changed copy

@@ -65,6 +65,7 @@ extern "C" bool ssPsramTest(void) __asm__("esp_psram_extram_test");
 #include "ss_classify.h"
 #include "ss_gps.h"
 #include "ss_devices.h"
+#include "ss_lora.h"
 #include "ss_nodes.h"
 #include "ss_proto.h"
 #include "pairing.h"
@@ -195,6 +196,73 @@ static uint32_t inspectLastMs = 0;
 // itself (name, maker, model, firmware, battery). Runs in its own task; scanning
 // pauses for the few seconds it takes. The device can see the connection.
 static volatile bool queryBusy = false;
+static uint32_t bleRestarts = 0;          // BLE scan found stopped and started again
+// C5: Bluetooth scans with full-time windows only (part-time ones hear next to nothing)
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+#define SS_BLE_FULL_WINDOWS 1
+#else
+#define SS_BLE_FULL_WINDOWS 0
+#endif
+static volatile bool bleOffBand = false;  // C5 sharing: Bluetooth off while Wi-Fi is on 5 GHz
+static uint32_t bleBlocks = 0;            // C5 sharing: Bluetooth blocks started
+
+// ---------------------------------------------------------------------------
+// USB serial self-heal (C5 / S3 built-in USB). Seen twice on the master: after the web
+// page reconnected, the board still read commands but nothing came back out until a
+// reset; scanning and the cluster carried on. If the computer has sent us something,
+// we've written since, and 3 s later nothing has gone out, wake the USB transmitter up;
+// if that doesn't do it, start its send buffer over (what was waiting is dropped).
+#if ARDUINO_USB_MODE && ARDUINO_USB_CDC_ON_BOOT
+#include "hal/usb_serial_jtag_ll.h"
+static volatile uint32_t usbTxMs = 0, usbRxMs = 0;
+static uint32_t usbKicks = 0, usbResets = 0;
+static void usbEvent(void*, esp_event_base_t, int32_t id, void*) {
+  if (id == ARDUINO_HW_CDC_TX_EVENT) usbTxMs = millis() | 1;
+  else if (id == ARDUINO_HW_CDC_RX_EVENT) usbRxMs = millis() | 1;
+}
+static void usbWatchBegin() { Serial.onEvent(usbEvent); }
+static void usbWatch(uint32_t now) {
+  // Stuck = the USB send buffer stays (nearly) full for 10 s while the cable is in: we keep
+  // writing and nothing drains. (Version 1 waited for the computer to send something, so a
+  // logger that only reads never set it off; version 2 used the driver's "sent" events,
+  // which don't come for every send, and fired 83 times in 3 h on a healthy link.)
+  // A kick is harmless when nobody is reading: it only re-arms the transmitter.
+  static uint32_t fullSince = 0, lastKick = 0;
+  static uint8_t tries = 0;
+  if (now < 60000) return;   // the first minute: the computer may not be reading yet (just flashed)
+  const bool full = Serial.availableForWrite() < 256;
+  if (!full) {
+    if (fullSince && tries) {
+      Out.printf("[usb] output resumed after %lu s stuck (kicks %lu, restarts %lu)\n",
+                 (unsigned long)((now - fullSince) / 1000), (unsigned long)usbKicks, (unsigned long)usbResets);
+    }
+    fullSince = 0;
+    tries = 0;
+    return;
+  }
+  if (!fullSince) { fullSince = now; return; }
+  if (now - fullSince < 10000 || now - lastKick < 10000 || !HWCDC::isPlugged()) return;
+  lastKick = now;
+  if (++tries <= 2) {
+    ++usbKicks;
+    usb_serial_jtag_ll_ena_intr_mask(USB_SERIAL_JTAG_INTR_SERIAL_IN_EMPTY);
+    usb_serial_jtag_ll_txfifo_flush();
+  } else if (tries == 3) {
+    // Kicks didn't do it: start the send buffer over (what was waiting is dropped).
+    ++usbResets;
+    usb_serial_jtag_ll_disable_intr_mask(USB_SERIAL_JTAG_INTR_SERIAL_IN_EMPTY);
+    Serial.setTxBufferSize(8192);
+    usb_serial_jtag_ll_ena_intr_mask(USB_SERIAL_JTAG_INTR_SERIAL_IN_EMPTY);
+    usb_serial_jtag_ll_txfifo_flush();
+  } else if (tries > 6) {
+    tries = 0;   // nobody reading, most likely: keep trying, gently
+  }
+}
+#else
+static void usbWatchBegin() {}
+static void usbWatch(uint32_t) {}
+static const uint32_t usbKicks = 0, usbResets = 0;
+#endif
 static volatile bool bleHeld = false;  // node: BLE paused so the radio can hear the master
 
 // Status for the node's own screen and the master's NODES panel
@@ -283,17 +351,24 @@ static constexpr uint32_t kNoMasterQuickMs = 60 * 1000;
 static constexpr uint8_t kNoMasterQuickTries = 3;
 static constexpr uint32_t kSelfRestartTag = 0x55AA0006;
 static constexpr uint32_t kRadioRestartTag = 0x55AA0009;
+static constexpr uint32_t kStuckTxRestartTag = 0x55AA000A;
 static constexpr uint32_t kRadioDeadMs = 90000;   // master / standalone: no Wi-Fi frame at all this long = radio didn't start
 RTC_NOINIT_ATTR static uint32_t rtcRestartTag;  // survives a software restart, not power loss
 RTC_NOINIT_ATTR static uint32_t rtcNoMasterRuns;  // quick no-master restarts in a row
 static uint8_t bootWhy = RW_UNKNOWN;
 static uint16_t linkLosses = 0;
 static uint32_t lostSince = 0;
+static uint32_t bootTagSeen = 0;          // for the boot log: what the last run left behind
+static int bootRawReason = 0;
 static uint8_t readResetWhy() {
   const esp_reset_reason_t r = esp_reset_reason();
-  const bool self = rtcRestartTag == kSelfRestartTag, radio = rtcRestartTag == kRadioRestartTag;
+  bootTagSeen = rtcRestartTag;
+  bootRawReason = (int)r;
+  const bool self = rtcRestartTag == kSelfRestartTag, radio = rtcRestartTag == kRadioRestartTag,
+             stuck = rtcRestartTag == kStuckTxRestartTag;
   rtcRestartTag = 0;
   if (r == ESP_RST_SW && radio) return RW_RADIO;
+  if (r == ESP_RST_SW && stuck) return RW_STUCK_TX;
   switch (r) {
     case ESP_RST_POWERON: case ESP_RST_EXT: return RW_POWER;
     case ESP_RST_SW: return self ? RW_NO_MASTER : RW_SOFTWARE;
@@ -316,6 +391,42 @@ static volatile int8_t rssiFloor = -95;
 static volatile uint8_t curChannel = kHomeChannel;
 static uint8_t hopCursor = kChannelCount - 1;
 static volatile uint32_t wifiFrames = 0, bleAdvs = 0, queueDrops = 0;
+
+// Bluetooth listening time, for the status line's "ble_min" (the last full minute):
+// how much of it the scan really ran, how often it was stopped and started, and by what.
+static volatile bool bleOn = false;
+static volatile uint32_t bleOnSince = 0, bleOnAcc = 0, bleStartsN = 0, bleStopsN = 0, bleTalkStops = 0,
+                         bleSelfEnds = 0;
+static void bleMarkOn() {
+  if (bleOn) return;
+  bleOn = true;
+  bleOnSince = millis();
+  ++bleStartsN;
+}
+static void bleMarkOff() {
+  if (!bleOn) return;
+  bleOn = false;
+  bleOnAcc += millis() - bleOnSince;
+  ++bleStopsN;
+}
+static uint32_t bleOnTotal(uint32_t now) { return bleOnAcc + (bleOn ? now - bleOnSince : 0); }
+struct BleMinute { uint8_t on_pct = 0; uint32_t adv = 0, starts = 0, stops = 0, talk = 0, ends = 0; bool valid = false; };
+static BleMinute bleMin;
+static void bleMinuteTick(uint32_t now) {
+  static uint32_t t0 = 0, on0 = 0, adv0 = 0, st0 = 0, sp0 = 0, tk0 = 0, en0 = 0;
+  if (!t0) { t0 = now; on0 = bleOnTotal(now); adv0 = bleAdvs; st0 = bleStartsN; sp0 = bleStopsN; tk0 = bleTalkStops; en0 = bleSelfEnds; return; }
+  if (now - t0 < 60000) return;
+  const uint32_t on = bleOnTotal(now);
+  bleMin.on_pct = (uint8_t)((uint64_t)(on - on0) * 100 / (now - t0));
+  bleMin.adv = bleAdvs - adv0;
+  bleMin.starts = bleStartsN - st0;
+  bleMin.stops = bleStopsN - sp0;
+  bleMin.talk = bleTalkStops - tk0;
+  bleMin.ends = bleSelfEnds - en0;
+  bleMin.valid = true;
+  t0 = now; on0 = on; adv0 = bleAdvs; st0 = bleStartsN; sp0 = bleStopsN; tk0 = bleTalkStops; en0 = bleSelfEnds;
+}
+
 static uint32_t lastHop = 0, lastReport = 0, lastHeartbeat = 0, lastHello = 0;
 static uint32_t lastStatus = 0, lastMaintain = 0, droppedShown = 0;
 
@@ -504,8 +615,13 @@ class ScanCallbacks : public NimBLEScanCallbacks {
   }
   void onScanEnd(const NimBLEScanResults&, int) override {
     // Restart if the stack stopped us (e.g. after a duty change).
-    if (queryBusy || bleHeld) return;  // paused on purpose
-    if (roleWantsBle() && cfg.ble_duty_pct > 0) NimBLEDevice::getScan()->start(0, true, false);
+    if (bleOn) ++bleSelfEnds;   // ended without us asking
+    bleMarkOff();
+    if (queryBusy || bleHeld || bleOffBand) return;  // paused on purpose
+    if (roleWantsBle() && cfg.ble_duty_pct > 0) {
+      NimBLEDevice::getScan()->start(0, true, false);
+      if (NimBLEDevice::getScan()->isScanning()) bleMarkOn();
+    }
   }
 };
 static ScanCallbacks scanCallbacks;
@@ -519,21 +635,43 @@ static ScanCallbacks scanCallbacks;
 // it, a race that crashed the Heltec (heap corruption in NimBLEScan::clearResults)
 // when it was stopping and starting the scan several times a second looking for a
 // lost master. NimBLE cleans that list up itself, in its own task.
-static void bleStop() { ble_gap_disc_cancel(); }
-static void bleStart() { NimBLEDevice::getScan()->start(0, true, false); }
+static void bleStop() {
+  ble_gap_disc_cancel();
+  bleMarkOff();
+}
+static void bleStart() {
+  NimBLEDevice::getScan()->start(0, true, false);
+  if (NimBLEDevice::getScan()->isScanning()) bleMarkOn();
+}
 
 static void applyBleDuty() {
   NimBLEScan* scan = NimBLEDevice::getScan();
   const uint8_t duty = roleWantsBle() ? cfg.ble_duty_pct : 0;
   bleStop();
   if (duty == 0) return;
-  // NimBLE takes milliseconds: 100 ms interval, window = duty share of it.
+  // NimBLE takes milliseconds: 100 ms interval, window = duty share of it. On a C5 the
+  // window is always the whole interval: part-time windows hear next to nothing there
+  // (see hop() for how its Bluetooth share is given instead).
   const uint16_t interval = 100;
+#if SS_BLE_FULL_WINDOWS
+  const uint16_t window = interval;
+#else
   uint16_t window = (uint16_t)((interval * duty) / 100);
   if (window < 10) window = 10;
+#endif
   scan->setInterval(interval);
   scan->setWindow(window);
-  bleStart();
+  if (!bleOffBand) bleStart();   // C5 sharing: the next Bluetooth block starts it
+}
+
+// Remembered across restarts: was the master's last word "use Long Range"? A node that
+// restarts out at the edge (no master for a while) would otherwise call for it at normal
+// speed only, which may not reach.
+static bool lrRemembered = false;
+static void rememberLr(bool lr, bool fast) {
+  if (lr != lrRemembered) prefs.putBool("lrlink", lr);
+  if (lr && fast != prefs.getBool("lrfast", true)) prefs.putBool("lrfast", fast);
+  lrRemembered = lr;
 }
 
 static void applyConfig(const Config& c) {
@@ -544,7 +682,12 @@ static void applyConfig(const Config& c) {
   if (runRole == RUN_NODE && paired && c.cfg_version) {
     espLink.setLrFast((c.node_flags & NF_LR_FAST) != 0);
     espLink.setPeerLongRange(coreMac, (c.node_flags & NF_LONG_RANGE) != 0);
+    rememberLr((c.node_flags & NF_LONG_RANGE) != 0, (c.node_flags & NF_LR_FAST) != 0);
   }
+#ifdef SS_LORA
+  // What the LoRa radio listens to: the master's choice for this node
+  if (runRole == RUN_NODE && c.cfg_version) lora::setMode(c.lora_mode, c.lora_slot);
+#endif
   const bool bleChanged = c.ble_duty_pct != cfg.ble_duty_pct || c.role != cfg.role;
   cfg = c;
   catMask = c.category_mask;
@@ -628,11 +771,12 @@ static void setCats(uint16_t m) {
 // ---------------------------------------------------------------------------
 // Node side of the link
 
+
 // A node that was told to use Long Range calls for a lost master in both modes, in
 // turns, so a master that has since switched LR off (or a new one) still hears it.
 static void helloRate() {
   static bool lr = false;
-  const bool want = (cfg.node_flags & NF_LONG_RANGE) && espLink.lrCapable();
+  const bool want = ((cfg.node_flags & NF_LONG_RANGE) || lrRemembered) && espLink.lrCapable();
   lr = want ? !lr : false;
   espLink.setBroadcastLongRange(lr);
 }
@@ -708,6 +852,7 @@ static void sendHeartbeat() {
 static void unpairAndRestart() {
   prefs.remove("key");
   prefs.remove("core");
+  prefs.remove("lrlink");
   Out.println("{\"t\":\"ack\",\"cmd\":\"pair\",\"reboot\":true}");
   Out.println("[pair] cluster key dropped, restarting to pair again");
   Serial.flush();
@@ -1090,18 +1235,31 @@ static void sendConfig(int slot) {
 }
 
 // What you set for a node on the master, kept by node id: job, screen, name.
-struct NodePrefs { uint8_t force_role; int8_t screen; char label[kMaxLabel + 1]; };
+// Kept per node on the master. Grows at the end; an older, shorter record still loads.
+struct NodePrefs {
+  uint8_t force_role; int8_t screen; char label[kMaxLabel + 1];
+  uint8_t lora_mode; uint8_t lora_slot;   // added Nov 2026
+  int8_t link_mode;                       // added Nov 2026
+};
+constexpr size_t kNodePrefsV1 = offsetof(NodePrefs, lora_mode);
+constexpr size_t kNodePrefsV2 = offsetof(NodePrefs, link_mode);
 static void nodePrefsKey(uint16_t id, char* key) { snprintf(key, 12, "nd_%04X", id); }
 static void loadNodePrefs(int slot) {
   NodeInfo& n = nodes.at(slot);
   char key[12];
   nodePrefsKey(n.id, key);
   NodePrefs p;
-  if (prefs.isKey(key) && prefs.getBytes(key, &p, sizeof(p)) == sizeof(p)) {
+  memset(&p, 0, sizeof(p));
+  p.link_mode = -1;
+  const size_t len = prefs.isKey(key) ? prefs.getBytesLength(key) : 0;
+  if ((len == sizeof(p) || len == kNodePrefsV1 || len == kNodePrefsV2) && prefs.getBytes(key, &p, len) == len) {
     n.force_role = p.force_role;
     n.screen = p.screen;
     memcpy(n.label, p.label, sizeof(n.label));
     n.label[kMaxLabel] = '\0';
+    n.lora_mode = p.lora_mode < LM_COUNT ? p.lora_mode : LM_AUTO;
+    n.lora_slot = p.lora_slot;
+    n.link_mode = p.link_mode >= -1 && p.link_mode <= 2 ? p.link_mode : -1;
   }
 }
 static void saveNodePrefs(int slot) {
@@ -1112,6 +1270,9 @@ static void saveNodePrefs(int slot) {
   p.force_role = n.force_role;
   p.screen = n.screen;
   memcpy(p.label, n.label, sizeof(p.label));
+  p.lora_mode = n.lora_mode;
+  p.lora_slot = n.lora_slot;
+  p.link_mode = n.link_mode;
   prefs.putBytes(key, &p, sizeof(p));
 }
 
@@ -1124,6 +1285,11 @@ static void sendWelcome(int slot, uint32_t now) {
   uint8_t buf[32];
   w.auth = espLink.authTag(buf, welcomeAuthInput(w, n.mac, buf, sizeof(buf)));
   // Broadcast, signed for this node only: it can't decrypt us until it has added us.
+  // Normal and Long Range in turns: a node out at the edge only hears the LR one, and it
+  // keeps calling until a WELCOME gets through.
+  static bool lr = false;
+  lr = espLink.lrCapable() && !lr;
+  espLink.setBroadcastLongRange(lr);
   espLink.send(nullptr, MSG_WELCOME, myId, buf, encodeWelcome(w, buf, sizeof(buf)));
 }
 
@@ -1133,10 +1299,18 @@ static void reassign() {
     if (nodes.at(i).used) {
       const NodeInfo& n = nodes.at(i);
       const bool on = n.screen < 0 ? nodeScreens : n.screen > 0;  // per-node setting wins
-      const bool lr = linkLr && espLink.lrCapable() && (n.hb.link & HL_LR_CAPABLE);
-      nodes.at(i).cfg.node_flags = (on ? 0 : NF_DISPLAY_OFF) | (lr ? NF_LONG_RANGE : 0) | (lr && espLink.lrFast() ? NF_LR_FAST : 0) |
+      // The link: the node's own LINK setting, or else the master's Long Range switch and speed
+      // Before its first heartbeat we don't know yet: assume it can (every current board
+      // can), so a node that only reaches us over LR gets its orders; a heartbeat saying
+      // otherwise reassigns it.
+      const bool canLr = espLink.lrCapable() && (n.hb.uptime_s == 0 || (n.hb.link & HL_LR_CAPABLE));
+      const bool lr = canLr && (n.link_mode < 0 ? linkLr : n.link_mode > 0);
+      const bool fast = n.link_mode == 1 ? false : n.link_mode == 2 ? true : espLink.lrFast();
+      nodes.at(i).cfg.node_flags = (on ? 0 : NF_DISPLAY_OFF) | (lr ? NF_LONG_RANGE : 0) | (lr && fast ? NF_LR_FAST : 0) |
                                    (g_probesOn ? NF_PROBES : 0);
-      espLink.setPeerLongRange(n.mac, lr);
+      nodes.at(i).cfg.lora_mode = n.lora_mode;
+      nodes.at(i).cfg.lora_slot = n.lora_slot;
+      espLink.setPeerLongRange(n.mac, lr, n.link_mode > 0 ? (int8_t)(fast ? 1 : 0) : (int8_t)-1);
     }
   for (int i = 0; i < kMaxNodes; ++i)
     if (nodes.at(i).used && nodes.at(i).online) sendConfig(i);
@@ -1215,20 +1389,31 @@ static void masterHandlePacket(const RxPacket& p, uint32_t now) {
       Heartbeat hb;
       if (!decodeHeartbeat(pl, n, hb)) { ++badFrames; return; }
       {
-        // GPS just locked (or lost its fix): tell the page and the dashboards
-        const uint8_t was = nodes.at(slot).hb.gps;
-        const bool lockedNow = hb.gps >= GPS_FIX_2D, lockedBefore = was >= GPS_FIX_2D;
-        if (hb.gps && lockedNow != lockedBefore && (lockedNow || was)) {
+        // GPS locked / lost its fix: tell the page and the dashboards. A fix that comes and
+        // goes (indoors, at the edge of the sky) is reported once: "lost" only after 60 s
+        // without one, "lock" only when it had been reported lost.
+        static bool gpsShown[kMaxNodes] = {};
+        static uint32_t gpsOffSince[kMaxNodes] = {};
+        const bool lockedNow = hb.gps >= GPS_FIX_2D;
+        const char* ev = nullptr;
+        if (lockedNow) {
+          gpsOffSince[slot] = 0;
+          if (!gpsShown[slot]) { gpsShown[slot] = true; ev = "gps_lock"; }
+        } else if (gpsShown[slot] && hb.gps) {
+          if (!gpsOffSince[slot]) gpsOffSince[slot] = now | 1;
+          else if (now - gpsOffSince[slot] >= 60000) { gpsShown[slot] = false; gpsOffSince[slot] = 0; ev = "gps_lost"; }
+        }
+        if (ev) {
           char t[kDashAlertText + 1];
           if (lockedNow) snprintf(t, sizeof(t), "GPS lock: node %04X, %u sats", nodes.at(slot).id, hb.gps_sats);
           else snprintf(t, sizeof(t), "GPS lost its fix: node %04X", nodes.at(slot).id);
           dashAlerts.note(0, CAT_NONE, t, now);
           if (g_jsonOn)
-            Out.printf("{\"t\":\"node\",\"event\":\"%s\",\"id\":\"%04X\",\"sats\":%u}\n", lockedNow ? "gps_lock" : "gps_lost",
-                       nodes.at(slot).id, hb.gps_sats);
+            Out.printf("{\"t\":\"node\",\"event\":\"%s\",\"id\":\"%04X\",\"sats\":%u}\n", ev, nodes.at(slot).id, hb.gps_sats);
         }
       }
-      if (linkLr && ((nodes.at(slot).hb.link ^ hb.link) & HL_LR_CAPABLE)) needAssign = true;
+      // First heartbeat (we'd assumed it can do LR) or its LR ability changed: redo its link
+      if (nodes.at(slot).hb.uptime_s == 0 || ((nodes.at(slot).hb.link ^ hb.link) & HL_LR_CAPABLE)) needAssign = true;
       nodes.at(slot).hb = hb;
       if (hb.has_pos) logger::setPosition(hb.lat_e7, hb.lon_e7, now);
       if (hb.utc) logger::setClock(hb.utc, now);
@@ -1338,6 +1523,13 @@ static void emitStatus(uint32_t now) {
              (unsigned long)(ESP.getFreeHeap() / 1024), (unsigned long)(ESP.getMinFreeHeap() / 1024), linkLosses);
   Out.printf(",\"heap_big\":%lu,\"psram\":%lu,\"psram_free\":%lu", (unsigned long)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024),
              (unsigned long)(psramTotal() / 1024), (unsigned long)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
+  Out.printf(",\"ble_blocks\":%lu", (unsigned long)bleBlocks);
+  if (bleMin.valid)   // the last full minute: % of it the scan ran, adverts, starts/stops, stops to talk to the master, ends on its own
+    Out.printf(",\"ble_min\":{\"on\":%u,\"adv\":%lu,\"starts\":%lu,\"stops\":%lu,\"talk\":%lu,\"ends\":%lu}", bleMin.on_pct,
+               (unsigned long)bleMin.adv, (unsigned long)bleMin.starts, (unsigned long)bleMin.stops,
+               (unsigned long)bleMin.talk, (unsigned long)bleMin.ends);
+  Out.printf(",\"ble_restarts\":%lu,\"usb_kicks\":%lu,\"usb_resets\":%lu", (unsigned long)bleRestarts,
+             (unsigned long)usbKicks, (unsigned long)usbResets);
 #ifdef SS_GPS
   Out.printf(",\"gps\":{\"st\":\"%s\",\"sats\":%u}", gpsStateName(gpsState(now)), gps.sats());
 #endif
@@ -1347,8 +1539,10 @@ static void emitStatus(uint32_t now) {
     const lora::Stats ls = lora::stats();
     Out.printf(",\"lora\":{\"ok\":%s,\"on\":", lora::ready() ? "true" : "false");
     jsonStr(ls.listening);
-    Out.printf(",\"pk\":%lu,\"mesh\":%lu,\"read\":%lu,\"wan\":%lu,\"other\":%lu,\"crc\":%lu}", (unsigned long)ls.packets,
-               (unsigned long)ls.meshtastic, (unsigned long)ls.mesh_read, (unsigned long)ls.lorawan, (unsigned long)ls.other, (unsigned long)ls.crc_errors);
+    Out.printf(",\"pk\":%lu,\"mesh\":%lu,\"read\":%lu,\"wan\":%lu,\"mc\":%lu,\"mca\":%lu,\"other\":%lu,\"crc\":%lu", (unsigned long)ls.packets,
+               (unsigned long)ls.meshtastic, (unsigned long)ls.mesh_read, (unsigned long)ls.lorawan, (unsigned long)ls.meshcore,
+               (unsigned long)ls.mc_adverts, (unsigned long)ls.other, (unsigned long)ls.crc_errors);
+    Out.printf(",\"mode\":\"%s\",\"mslot\":%u,\"mhz\":%.4f,\"slot\":%u}", loraModeName(lora::mode()), lora::slot(), ls.mhz, ls.slot);
   }
 #endif
   Out.printf(",\"id\":\"%04X\",\"key\":%s,\"ms\":%lu,\"cats\":%u,\"ch\":%u,\"channels\":%u,\"ble_duty\":%u,"
@@ -1403,7 +1597,10 @@ static void emitStatus(uint32_t now) {
                    n.hb.heap_min_kb, n.hb.losses);
       if (n.hb.sd) Out.printf(",\"sd\":\"%s\"", sdStateName(n.hb.sd));
       Out.printf(",\"lr\":%u", n.hb.link);
-      Out.printf(",\"force\":\"%s\",\"screen\":%d,\"label\":", roleName(n.force_role), n.screen);
+      Out.printf(",\"force\":\"%s\",\"screen\":%d", roleName(n.force_role), n.screen);
+      Out.printf(",\"lmd\":\"%s\"", n.link_mode == 0 ? "normal" : n.link_mode == 1 ? "lr250" : n.link_mode == 2 ? "lr500" : "auto");
+      if (n.caps & CAP_LORA_915) Out.printf(",\"lmode\":\"%s\",\"lslot\":%u", loraModeName(n.lora_mode), n.lora_slot);
+      Out.print(",\"label\":");
       jsonStr(n.label);
       Out.print("}");
       first = false;
@@ -1554,6 +1751,94 @@ static void memReport() {
   Out.printf("[mem] PSRAM: %s, %lu KB free\n", psramNote.c_str(), (unsigned long)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
 }
 
+// ---------------------------------------------------------------------------
+// "bletest": what keeps a C5's Bluetooth deaf while Wi-Fi scans? Runs 9 cases of 20 s
+// each (about 3 minutes, the board is busy and off the cluster meanwhile), prints how
+// many Bluetooth adverts each one heard, then restarts to get back to normal.
+static void bleTestDuty(uint8_t pct) {
+  bleHeld = false;
+  bleOffBand = false;
+  NimBLEScan* scan = NimBLEDevice::getScan();
+  bleStop();
+  delay(20);
+  scan->setInterval(100);
+  scan->setWindow(pct >= 100 ? 100 : (pct < 10 ? 10 : pct));
+  bleStart();
+}
+
+static void bleTestPark(bool capture) {
+#if SOC_WIFI_SUPPORT_5G
+  esp_wifi_set_band_mode(WIFI_BAND_MODE_AUTO);
+#endif
+  esp_wifi_set_promiscuous(capture);
+  setRadioChannel(kHomeChannel);
+  curChannel = kHomeChannel;
+}
+
+static void runBleTest() {
+  struct Case { const char* name; uint8_t mode; uint8_t duty; bool capture; };
+  // mode: 0 parked on ch 6, 1 hop 2.4 GHz, 2 hop 2.4 + 5 GHz, 3 Wi-Fi scan function (all channels)
+  static const Case kCases[] = {
+      {"A parked ch6, BT 100%", 0, 100, true},
+      {"B parked ch6, BT 35%", 0, 35, true},
+      {"C hop 2.4 GHz, BT 100%", 1, 100, true},
+      {"D hop 2.4+5 GHz, BT 100%", 2, 100, true},
+      {"E parked again (after D), BT 100%", 0, 100, true},
+      {"F hop 2.4+5 GHz capture OFF, BT 100%", 2, 100, false},
+      {"G Wi-Fi scan function, all channels, BT 100%", 3, 100, false},
+      {"H parked again (after G), BT 100%", 0, 100, true},
+      {"I hop 2.4 GHz, BT 35%", 1, 35, true},
+  };
+  constexpr uint32_t kCaseMs = 20000;
+  constexpr uint8_t kN = sizeof(kCases) / sizeof(kCases[0]);
+  uint32_t adv[kN] = {}, frames[kN] = {}, aps[kN] = {};
+  Out.printf("[bletest] starting: %u cases x %lu s. The board is off the cluster until it restarts at the end.\n",
+             kN, (unsigned long)(kCaseMs / 1000));
+  for (uint8_t c = 0; c < kN; ++c) {
+    const Case& k = kCases[c];
+    bleTestPark(k.capture);
+    bleTestDuty(k.duty);
+    delay(300);
+    const uint32_t a0 = bleAdvs, f0 = wifiFrames, t0 = millis();
+    uint8_t cursor = 0;
+    const uint64_t mask = k.mode == 1 ? kMask24 : kMaskAll;
+    while (millis() - t0 < kCaseMs) {
+      if (k.mode == 1 || k.mode == 2) {
+        const uint8_t ch = nextChannel(mask, &cursor);
+        setRadioChannel(ch);
+        delay(120);
+      } else if (k.mode == 3) {
+        const uint8_t ch = nextChannel(kMaskAll, &cursor);
+        wifi_scan_config_t sc = {};
+        sc.channel = ch;
+        sc.show_hidden = true;
+        sc.scan_type = WIFI_SCAN_TYPE_PASSIVE;
+        sc.scan_time.passive = 120;
+        if (esp_wifi_scan_start(&sc, true) == ESP_OK) {
+          uint16_t n = 0;
+          esp_wifi_scan_get_ap_num(&n);
+          aps[c] += n;
+          esp_wifi_clear_ap_list();
+        }
+        delay(30);   // Bluetooth gets the radio between scans
+      } else {
+        delay(100);
+      }
+    }
+    adv[c] = bleAdvs - a0;
+    frames[c] = wifiFrames - f0;
+    Out.printf("[bletest] %s: %lu Bluetooth adverts, %lu Wi-Fi frames%s", k.name, (unsigned long)adv[c],
+               (unsigned long)frames[c], k.mode == 3 ? "" : "\n");
+    if (k.mode == 3) Out.printf(", %lu access points found\n", (unsigned long)aps[c]);
+  }
+  Out.println("[bletest] summary (Bluetooth adverts per case):");
+  for (uint8_t c = 0; c < kN; ++c) Out.printf("[bletest]   %-46s %6lu\n", kCases[c].name, (unsigned long)adv[c]);
+  Out.println("[bletest] done, restarting");
+  Serial.flush();
+  delay(500);
+  ESP.restart();
+}
+
 static void handleLine(String line, uint32_t now) {
   line.trim();
   if (!line.length()) return;
@@ -1567,6 +1852,8 @@ static void handleLine(String line, uint32_t now) {
     saveAndReboot("role");
   } else if (line == "mem") {
     memReport();
+  } else if (line == "bletest") {
+    runBleTest();
   } else if (line.startsWith("setup ") && line != "setup done" && line != "setup reset") {
     // First-run setup in one step: "setup <role> [key]" ("-" clears the key,
     // leaving it out keeps the current one). Saves everything, reboots once.
@@ -1720,7 +2007,7 @@ static void handleLine(String line, uint32_t now) {
       inspectOn = true;
     }
   } else if (runRole == RUN_MASTER && line.startsWith("node ")) {
-    // node <ID> label <text>|-  role auto|ble|wifi|both  screen on|off|auto  identify  reboot  forget
+    // node <ID> label <text>|-  role auto|ble|wifi|both|all  screen on|off|auto  link auto|normal|lr250|lr500  lora <mode> [slot]  identify  reboot  forget
     String rest = line.substring(5);
     rest.trim();
     const int sp = rest.indexOf(' ');
@@ -1744,7 +2031,7 @@ static void handleLine(String line, uint32_t now) {
       if (n.online) sendConfig(slot);
     } else if (cmd.startsWith("role ")) {
       const String r = cmd.substring(5);
-      n.force_role = r == "ble" ? ROLE_BLE : r == "wifi" ? ROLE_WIFI : r == "both" ? ROLE_BOTH : ROLE_AUTO;
+      n.force_role = r == "ble" ? ROLE_BLE : r == "wifi" ? ROLE_WIFI : r == "both" ? ROLE_BOTH : r == "all" ? ROLE_ALL : ROLE_AUTO;
       saveNodePrefs(slot);
       needAssign = true;
     } else if (cmd.startsWith("screen ")) {
@@ -1752,6 +2039,29 @@ static void handleLine(String line, uint32_t now) {
       n.screen = v == "on" ? 1 : v == "off" ? 0 : -1;
       saveNodePrefs(slot);
       needAssign = true;
+    } else if (cmd.startsWith("link ")) {
+      // link auto | normal | lr250 | lr500: this node's link to the master
+      const String v = cmd.substring(5);
+      n.link_mode = v == "normal" ? 0 : v == "lr250" ? 1 : v == "lr500" ? 2 : -1;
+      saveNodePrefs(slot);
+      needAssign = true;
+      Out.printf("[master] node %04X link: %s\n", n.id, v.c_str());
+    } else if (cmd.startsWith("lora ")) {
+      // lora auto | longfast | mediumfast | ... | meshcore | lorawan  [slot]
+      String a = cmd.substring(5);
+      a.trim();
+      const int s2 = a.indexOf(' ');
+      uint8_t m;
+      if (!parseLoraMode((s2 < 0 ? a : a.substring(0, s2)).c_str(), m)) {
+        Out.println("[master] lora auto|longfast|mediumfast|mediumslow|longslow|longmod|shortfast|shortslow|shortturbo|meshcore|lorawan [slot]");
+        return;
+      }
+      const long sl = s2 < 0 ? 0 : a.substring(s2 + 1).toInt();
+      n.lora_mode = m;
+      n.lora_slot = loraModeIsMeshtastic(m) && sl > 0 && sl <= 255 ? (uint8_t)sl : 0;
+      saveNodePrefs(slot);
+      needAssign = true;
+      Out.printf("[master] node %04X LoRa: %s%s\n", n.id, loraModeName(n.lora_mode), n.lora_slot ? " (own slot)" : "");
     } else if (cmd == "identify") {
       c.cmd = NC_IDENTIFY; c.arg = 10;
       queueCommand(slot, c);
@@ -1822,6 +2132,27 @@ static void handleLine(String line, uint32_t now) {
     needAssign = true;   // nodes pick it up with the next CONFIG
     Out.printf("[master] Long Range rate %s kbit/s\n", fast ? "500" : "250");
     Out.println("{\"t\":\"ack\",\"cmd\":\"link lr rate\"}");
+#ifdef SS_LORA
+  } else if (line.startsWith("lora ")) {
+    // This board's own LoRa radio. On a node the master's setting wins (CLUSTER > EDIT).
+    String a = line.substring(5);
+    a.trim();
+    const int s2 = a.indexOf(' ');
+    uint8_t m;
+    if (runRole == RUN_NODE) {
+      Out.println("[lora] this is a node: choose what it listens to on the master (CLUSTER > EDIT > LORA)");
+    } else if (!parseLoraMode((s2 < 0 ? a : a.substring(0, s2)).c_str(), m)) {
+      Out.println("[lora] lora auto|longfast|mediumfast|mediumslow|longslow|longmod|shortfast|shortslow|shortturbo|meshcore|lorawan [slot]");
+    } else {
+      const long sl = s2 < 0 ? 0 : a.substring(s2 + 1).toInt();
+      const uint8_t slot = loraModeIsMeshtastic(m) && sl > 0 && sl <= 255 ? (uint8_t)sl : 0;
+      lora::setMode(m, slot);
+      prefs.putUChar("loramode", m);
+      prefs.putUChar("loraslot", slot);
+      Out.printf("[lora] listening: %s%s\n", loraModeName(m), slot ? " (own slot)" : "");
+      Out.println("{\"t\":\"ack\",\"cmd\":\"lora\"}");
+    }
+#endif
   } else if (runRole == RUN_MASTER && (line == "screens on" || line == "screens off")) {
     nodeScreens = line == "screens on";
     prefs.putBool("nodescr", nodeScreens);
@@ -1871,6 +2202,7 @@ void setup() {
 #if ARDUINO_USB_MODE && ARDUINO_USB_CDC_ON_BOOT
   Serial.setTxTimeoutMs(5);      // never sit and wait on USB (see OutTee::write)
 #endif
+  usbWatchBegin();
   delay(200);
   bootWhy = readResetWhy();
   if (bootWhy != RW_NO_MASTER || rtcNoMasterRuns > 100) rtcNoMasterRuns = 0;
@@ -1906,6 +2238,7 @@ void setup() {
   nodeScreens = prefs.isKey("nodescr") ? prefs.getBool("nodescr", true) : true;
   linkLr = prefs.getBool("linklr", false);
   espLink.setLrFast(prefs.getBool("lrfast", true));   // 500 kbit/s unless chosen otherwise (see README, Long Range)
+  lrRemembered = prefs.getBool("lrlink", false);      // node: last told to use LR (calls in both modes)
   localScreen = prefs.isKey("screen") ? prefs.getBool("screen", true) : true;
   {
     // Default: the V8 (battery, GPS) is usually carried; dev boards usually sit still.
@@ -2014,13 +2347,16 @@ void setup() {
   Out.printf("[subghz] CC1101 band watch %s\n", subghz::begin(&catMask) ? "ready (315 / 345 / 390 / 433.92 / 915 MHz, receive only)" : "FAILED (radio not found)");
 #endif
 #ifdef SS_LORA
-  Out.printf("[lora] 915 MHz listener %s\n", lora::begin(&loraSink, &catMask) ? "ready (Meshtastic + LoRaWAN, receive only)" : "FAILED (radio not found)");
+  Out.printf("[lora] 915 MHz listener %s\n", lora::begin(&loraSink, &catMask) ? "ready (Meshtastic, MeshCore, LoRaWAN; receive only)" : "FAILED (radio not found)");
+  // A node gets its setting from the master; a standalone or master board keeps its own.
+  if (runRole != RUN_NODE) lora::setMode(prefs.getUChar("loramode", LM_AUTO), prefs.getUChar("loraslot", 0));
 #endif
   char s[18];
   formatMac(myMac, s);
   Out.printf("[%s] SkySentinel %s (id %04X) fw %u, key %s%s%s\n", runRoleName(runRole), s, myId, SS_FW_VERSION,
                 clusterKey.length() ? "set" : "none", setupDone ? "" : ", setup not done",
                 runRole == RUN_NODE && corePinned ? ", master pinned" : "");
+  Out.printf("[boot] reset reason %d, restart tag %08lX -> %s\n", bootRawReason, (unsigned long)bootTagSeen, resetWhyName(bootWhy));
   Out.printf("[%s] started: %s, free heap %lu KB\n", runRoleName(runRole), resetWhyName(bootWhy),
              (unsigned long)(ESP.getFreeHeap() / 1024));
   if (table) Out.printf("[%s] table %u devices, cats 0x%04X\n", runRoleName(runRole), (unsigned)table->capacity(), userCats);
@@ -2038,7 +2374,7 @@ static void drainHits(uint32_t now) {
         memcpy(key, it.s.addr, 6);
         key[0] ^= (uint8_t)(it.what << 4);
         send = liveNames.shouldSend(key, now);
-      } else if (it.what != NAME_DEVICE || it.s.kind == KIND_LORA_MESHTASTIC) {
+      } else if (it.what != NAME_DEVICE || it.s.kind == KIND_LORA_MESHTASTIC || it.s.kind == KIND_LORA_MESHCORE) {
         // Once per (device, text) every few minutes: key on a hash of both. (Phones ask
         // for many networks; a Meshtastic node has an id, a name and a position.)
         uint32_t h = 2166136261u;
@@ -2085,10 +2421,54 @@ static void checkStuckTx(uint32_t now) {
   Out.printf("[link] %lu frames stuck in the Wi-Fi driver for %lu ms (Long Range %s, heap %lu KB), restarting\n",
              (unsigned long)espLink.inFlight(), (unsigned long)(now - since),
              paired && espLink.peerLongRange(coreMac) ? "on" : "off", (unsigned long)(ESP.getFreeHeap() / 1024));
-  rtcRestartTag = kSelfRestartTag;
+  rtcRestartTag = kStuckTxRestartTag;
   Serial.flush();
   delay(100);
   ESP.restart();
+}
+
+// C5 only: gives Bluetooth its share as blocks of full-time listening. Returns true while
+// in a Bluetooth block (Wi-Fi must stay on the home channel). chans = Wi-Fi channels in use.
+static bool bleShare(uint32_t now, uint64_t chans) {
+#if SS_BLE_FULL_WINDOWS
+  // C5: Bluetooth only hears with full-time scan windows (bletest, both boards: parked
+  // with 35% windows 6-8 adverts in 20 s, full-time 300-460, hopping or not). So the
+  // Bluetooth share is given as blocks of time instead: for duty% of each cycle Wi-Fi
+  // stays on the home channel and Bluetooth listens full-time; the rest of the cycle
+  // Bluetooth is off and Wi-Fi hops with the radio to itself. Parked Wi-Fi gets blocks
+  // too: nonstop Bluetooth on the master cost its classic-ESP32 nodes a quarter of their
+  // frames (unacknowledged while its radio was on Bluetooth), 4x the loss with it off.
+  // The master keeps its Bluetooth blocks short: frames from nodes that arrive during one
+  // go unacknowledged, so its share is what the cluster link loses (about a quarter of the
+  // classic nodes' frames at nonstop Bluetooth). 15% still hears ~6x what 30% windows did.
+  constexpr uint8_t kMasterBlePct = 15;
+  const uint8_t duty = runRole == RUN_MASTER && cfg.ble_duty_pct > kMasterBlePct ? kMasterBlePct : cfg.ble_duty_pct;
+  if (roleWantsBle() && duty > 0 && duty < 100) {
+    constexpr uint32_t kCycleMs = 10000;
+    static uint32_t cycleStart = 0;
+    static uint8_t saidDuty = 0;
+    const uint32_t park = kCycleMs / 100u * duty;  // 35% = 3.5 s of each 10 s
+    if (now - cycleStart >= kCycleMs) cycleStart = now;
+    if (saidDuty != duty) {
+      saidDuty = duty;
+      Out.printf("[ble] sharing the radio: Bluetooth full-time for %lu ms of each %lu s on ch %u, Wi-Fi %s the rest\n",
+                 (unsigned long)park, (unsigned long)(kCycleMs / 1000), kHomeChannel,
+                 chans && channelCount(chans) > 1 ? "hops" : "has the radio");
+    }
+    if (now - cycleStart < park) {
+      if (chans) goHome();
+      if (bleOffBand && !bleHeld && !queryBusy) { bleOffBand = false; ++bleBlocks; bleStart(); }
+      return true;
+    }
+    if (!bleOffBand) { bleOffBand = true; bleStop(); }
+  } else if (bleOffBand) {
+    bleOffBand = false;   // plan changed: back to plain Bluetooth
+    if (!bleHeld && !queryBusy) applyBleDuty();
+  }
+#else
+  (void)now; (void)chans;
+#endif
+  return false;
 }
 
 static void hop(uint32_t now) {
@@ -2097,6 +2477,7 @@ static void hop(uint32_t now) {
   // (leaving with Long Range frames waiting is the suspect for frames that never finish).
   // checkStuckTx() clears the link if they truly hang.
   const bool sending = runRole == RUN_NODE && espLink.inFlight();
+  if (bleShare(now, chans)) return;   // C5: Bluetooth's block, Wi-Fi stays home
   if (chans && !sending && (int32_t)(now - lastHop) >= (int32_t)cfg.dwell_ms) {
     const uint8_t ch = nextChannel(chans, &hopCursor);
     if (ch && ch != curChannel && setRadioChannel(ch)) curChannel = ch;
@@ -2110,9 +2491,27 @@ static void hop(uint32_t now) {
 // can't hear ESP-NOW. Around each exchange with the master: stop BLE, send, listen
 // for the reply, then scan again.
 static void talkToMaster(void (*send)(), uint32_t listen_ms = kListenWindowMs) {
-  const bool scanning = roleWantsBle() && cfg.ble_duty_pct > 0 && !queryBusy;
-  if (scanning) { bleHeld = true; bleStop(); }
+  // Bluetooth pauses for the master's reply only while looking for a master, at 100%
+  // Bluetooth, or on a C5 (blocks). Otherwise it keeps running: restarting it every second
+  // left a Heltec (S3) scan "on" 93% of the time yet hearing ~25 adverts/min, against
+  // ~500/min uninterrupted at the same 35% (bletest case I). Part-time windows leave the
+  // radio free for the reply.
+  const bool scanning = roleWantsBle() && cfg.ble_duty_pct > 0 && !queryBusy &&
+                        (!paired || cfg.ble_duty_pct >= 100 || SS_BLE_FULL_WINDOWS);
+  if (scanning) { bleHeld = true; if (bleOn) ++bleTalkStops; bleStop(); }
+  // Otherwise Bluetooth steps aside only while the frames are leaving (until the driver
+  // reports them sent, a few ms), then carries on. Sending with Bluetooth running made
+  // esp-idf #19269 (a frame stuck in the driver, node restarts) several times as common
+  // on a Heltec: about 1 per 1.7 h vs 1 per 5 h with Bluetooth paused.
+  const bool briefPause = !scanning && roleWantsBle() && cfg.ble_duty_pct > 0 && !queryBusy && bleOn;
+  if (briefPause) { bleHeld = true; ++bleTalkStops; bleStop(); }
   send();
+  if (briefPause) {
+    const uint32_t s0 = millis();
+    while (espLink.inFlight() && millis() - s0 < 50) delay(1);
+    bleHeld = false;
+    bleStart();
+  }
   const uint32_t t0 = millis();
   RxPacket p;
   while (millis() - t0 < listen_ms) {
@@ -2160,7 +2559,7 @@ static void loopNode(uint32_t now) {
     Out.printf("[node] the radio stopped sending (%lu failures in a row, last %s, in flight %lu, heap %lu KB), restarting\n",
                (unsigned long)espLink.failStreak(), esp_err_to_name(espLink.lastSendError()),
                (unsigned long)espLink.inFlight(), (unsigned long)(ESP.getFreeHeap() / 1024));
-    rtcRestartTag = kSelfRestartTag;
+    rtcRestartTag = kStuckTxRestartTag;
     Serial.flush();
     delay(100);
     ESP.restart();
@@ -2218,6 +2617,22 @@ static void loopNode(uint32_t now) {
     return;
   }
   if (bleHeld && !queryBusy) { bleHeld = false; applyBleDuty(); }   // found the master again: scan as planned
+  {
+    // Bluetooth scan should be running but isn't (seen on a C5 node hopping 5 GHz: no BLE
+    // adverts at all for an hour). Start it again, and count it so the status shows it.
+    static uint32_t lastCheck = 0;
+    if (now - lastCheck >= 5000) {
+      lastCheck = now;
+      if (roleWantsBle() && cfg.ble_duty_pct > 0 && !bleHeld && !queryBusy && !bleOffBand && !NimBLEDevice::getScan()->isScanning()) {
+        ++bleRestarts;
+        uint8_t ch = 0;
+        wifi_second_chan_t sc;
+        esp_wifi_get_channel(&ch, &sc);
+        Out.printf("[ble] scan wasn't running (Wi-Fi on ch %u), starting it again (%lu so far)\n", ch, (unsigned long)bleRestarts);
+        applyBleDuty();
+      }
+    }
+  }
   if (now - lastReport >= cfg.report_ms || batch.full()) {
     goHome();
     const uint32_t every = cfg.cfg_version ? kHeartbeatEveryMs : kUnconfiguredBeatMs;
@@ -2280,10 +2695,15 @@ static void loopTable(uint32_t now) {
   logger::poll(now);
   phaseEnd(LP_LOG);
   if (runRole == RUN_STANDALONE) hop(now);  // a master never leaves the home channel
+  else if (runRole == RUN_MASTER) bleShare(now, 0);   // its own Bluetooth, in blocks (C5)
 }
+
+
 
 void loop() {
   const uint32_t now = millis();
+  usbWatch(now);
+  bleMinuteTick(now);
 #ifdef SS_DISPLAY_TEMBED
   display::tick(now);   // jog wheel and buttons: page flips feel instant
 #endif

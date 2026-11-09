@@ -42,6 +42,7 @@ struct Device {
   int8_t node_rssi[kMaxNodes];
   uint32_t node_ms[kMaxNodes];
   char name[kMaxName + 1] = {0};
+
   // Access point details (Wi-Fi APs only; ap_sec 0 = none heard)
   uint8_t ap_sec = 0, ap_gen = 0, ap_width = 0, ap_util = 255;
   uint16_t ap_sta = 0xFFFF;
@@ -56,6 +57,11 @@ struct Device {
   uint8_t places = 0;
   bool follow_alerted = false;
 };
+
+// Which radio heard it best: the strongest node (table slot) among those that heard it in
+// the last window_ms, else the one that heard it last. -1 if none. rssi gets its signal,
+// count (optional) how many nodes heard it in the window.
+int bestNode(const Device& d, uint32_t now_ms, uint32_t window_ms, int8_t* rssi, uint8_t* count = nullptr);
 
 // One transmitter faking many devices (Flipper "BLE Spam" and friends): a burst of
 // new random addresses of easily spoofed types, all at nearly the same signal.

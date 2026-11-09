@@ -143,7 +143,7 @@ static void testCrcAndFrames() {
   c.channel_mask = kMaskAll; c.dwell_ms = 150; c.report_ms = 800; c.rssi_floor = -88; c.ble_duty_pct = 35;
   c.node_flags = NF_DISPLAY_OFF;
   pl = encodeConfig(c, payload, sizeof(payload));
-  CHECK_EQ(pl, 20u);  // 18 + node_flags + empty name
+  CHECK_EQ(pl, 22u);  // 18 + node_flags + empty name + LoRa mode/slot
   Config c2;
   CHECK(decodeConfig(payload, pl, c2));
   CHECK_EQ(c2.node_flags, NF_DISPLAY_OFF);
@@ -152,11 +152,11 @@ static void testCrcAndFrames() {
     strcpy(named.label, "Truck rear");
     uint8_t nb[kMaxConfigSize];
     const size_t nl = encodeConfig(named, nb, sizeof(nb));
-    CHECK_EQ(nl, 30u);                                       // 18 + flags + len + 10
+    CHECK_EQ(nl, 32u);                                       // 18 + flags + len + 10 + LoRa 2
     Config back;
     CHECK(decodeConfig(nb, nl, back));
     CHECK(strcmp(back.label, "Truck rear") == 0 && back.node_flags == NF_DISPLAY_OFF);
-    CHECK(!decodeConfig(nb, nl - 1, back));                  // name cut short
+    CHECK(!decodeConfig(nb, nl - 3, back));                  // name cut short
     Config longest = c;
     memset(longest.label, 'x', kMaxLabel);
     CHECK_EQ(encodeConfig(longest, nb, sizeof(nb)), kMaxConfigSize);
@@ -1259,6 +1259,51 @@ static void testNodes() {
     CHECK_EQ(r.onlineCount(), 1);
   }
   {
+    // Which board hears a device best
+    Device d;
+    for (uint8_t i = 0; i < kMaxNodes; ++i) { d.node_rssi[i] = -127; d.node_ms[i] = 0; }
+    int8_t r = 0;
+    uint8_t c = 9;
+    CHECK_EQ(bestNode(d, 100000, 60000, &r, &c), -1);
+    d.node_rssi[1] = -70; d.node_ms[1] = 95000;
+    d.node_rssi[4] = -55; d.node_ms[4] = 99000;
+    d.node_rssi[2] = -40; d.node_ms[2] = 10000;   // strongest, but heard long ago
+    CHECK(bestNode(d, 100000, 60000, &r, &c) == 4 && r == -55 && c == 2);
+    CHECK(bestNode(d, 500000, 60000, &r, &c) == 4 && c == 0);   // nobody recently: the last one to hear it
+  }
+  {
+    // EVERYTHING: a C5 across the house scans the whole plan on its own; the office
+    // nodes (a C5, a classic ESP32, a C5) split the work as if it weren't there.
+    const uint8_t esp32x = CAP_WIFI24 | CAP_BT_CLASSIC;
+    NodeRegistry r;
+    const int far = r.add(mkHello(30, c5), 100);
+    const int o1 = r.add(mkHello(31, c5), 100);
+    const int o2 = r.add(mkHello(32, esp32x), 100);
+    const int o3 = r.add(mkHello(33, c5), 100);
+    r.at(far).force_role = ROLE_ALL;
+    r.assign(kAllCategoriesMask, ASSIGN_SPLIT);
+    const ScanPlan plan = planForCategories(kAllCategoriesMask);
+    CHECK(r.at(far).cfg.role == ROLE_BOTH && r.at(far).cfg.channel_mask == plan.channel_mask);
+    CHECK_EQ(r.at(far).cfg.ble_duty_pct, plan.ble_duty_pct);
+    // The office nodes cover every channel between them, without overlapping
+    const uint64_t m1 = r.at(o1).cfg.channel_mask, m2 = r.at(o2).cfg.channel_mask, m3 = r.at(o3).cfg.channel_mask;
+    CHECK_EQ(m1 | m2 | m3, plan.channel_mask);
+    CHECK((m1 & m2) == 0 && (m1 & m3) == 0 && (m2 & m3) == 0);
+    CHECK_EQ(m2 & kMask5, 0u);                                    // the classic one stays on 2.4 GHz
+    CHECK(r.at(o1).cfg.ble_duty_pct || r.at(o3).cfg.ble_duty_pct); // and one of the office C5s does BLE
+    CHECK(strcmp(roleName(ROLE_ALL), "all") == 0);
+    // Alone with the classic one: it gets all of 2.4 GHz, the far node still everything
+    r.at(o1).online = r.at(o3).online = false;
+    r.assign(kAllCategoriesMask, ASSIGN_SPLIT);
+    CHECK_EQ(r.at(o2).cfg.channel_mask, plan.channel_mask & kMask24);
+    CHECK_EQ(r.at(far).cfg.channel_mask, plan.channel_mask);
+    // Every node on EVERYTHING: each one scans it all
+    r.at(o2).force_role = ROLE_ALL;
+    r.assign(kAllCategoriesMask, ASSIGN_SPLIT);
+    CHECK_EQ(r.at(o2).cfg.channel_mask, plan.channel_mask & kMask24);
+    CHECK(r.at(o2).cfg.role == ROLE_WIFI && r.at(o2).cfg.ble_duty_pct == 0);
+  }
+  {
     // Master scanning locally: slot 0 is its own radio, never handed to a node.
     NodeRegistry r;
     r.reserve(0);
@@ -1681,6 +1726,103 @@ static void testLora() {
   CHECK(!parseLoraWan(major1, sizeof(major1), f));             // unknown major version
   const uint8_t fopts[] = {0x40, 0x34, 0x12, 0x0B, 0x26, 0x0F, 0x07, 0x00, 1, 2, 3, 4};
   CHECK(!parseLoraWan(fopts, sizeof(fopts), f));               // FOpts longer than the frame
+
+  // Meshtastic US slots (djb2 of the default channel name), as the Meshtastic docs list them
+  CHECK_EQ(meshUsSlots(250.0f), 104);
+  CHECK_EQ(meshUsSlots(125.0f), 208);
+  CHECK_EQ(meshUsDefaultSlot("LongFast", 250.0f), 20);
+  CHECK_EQ(meshUsDefaultSlot("MediumFast", 250.0f), 45);
+  CHECK_EQ(meshUsDefaultSlot("ShortFast", 250.0f), 68);
+  LoraPreset lp;
+  CHECK(loraModePreset(LM_LONGFAST, 0, lp) && lp.mhz > 906.87f && lp.mhz < 906.88f && lp.sf == 11 && lp.sync == 0x2B);
+  CHECK(loraModePreset(LM_MEDIUMFAST, 0, lp) && lp.mhz > 913.12f && lp.mhz < 913.13f && lp.sf == 9);
+  CHECK(loraModePreset(LM_SHORTFAST, 0, lp) && lp.mhz > 918.87f && lp.mhz < 918.88f && lp.sf == 7);
+  CHECK(loraModePreset(LM_LONGSLOW, 0, lp) && lp.bw_khz == 125.0f && lp.sf == 12 && lp.cr == 8);
+  CHECK(loraModePreset(LM_LONGFAST, 1, lp) && lp.mhz > 902.12f && lp.mhz < 902.13f);    // slot 1 = 902.125
+  CHECK(loraModePreset(LM_LONGFAST, 104, lp) && lp.mhz > 927.87f && lp.mhz < 927.88f);  // the last one
+  CHECK(loraModePreset(LM_LONGFAST, 200, lp) && lp.mhz > 906.87f && lp.mhz < 906.88f);  // out of range: default
+  CHECK(strcmp(lp.name, "LongFast") == 0);
+  CHECK(loraModePreset(LM_MESHCORE, 5, lp) && lp.mhz > 910.52f && lp.mhz < 910.53f && lp.bw_khz == 62.5f && lp.sync == 0x12);
+  CHECK(!loraModePreset(LM_AUTO, 0, lp) && !loraModePreset(LM_LORAWAN, 0, lp));
+  uint8_t lm = 99;
+  CHECK(parseLoraMode("MeshCore", lm) && lm == LM_MESHCORE);
+  CHECK(parseLoraMode("longfast", lm) && lm == LM_LONGFAST);
+  CHECK(parseLoraMode("auto", lm) && lm == LM_AUTO);
+  CHECK(!parseLoraMode("longfas", lm) && !parseLoraMode("longfastx", lm) && !parseLoraMode("", lm));
+  for (uint8_t m = 0; m < LM_COUNT; ++m) CHECK(parseLoraMode(loraModeName(m), lm) && lm == m);
+  CHECK(loraModeIsMeshtastic(LM_SHORTTURBO) && !loraModeIsMeshtastic(LM_MESHCORE) && !loraModeIsMeshtastic(LM_AUTO));
+
+  // MeshCore advert, flooded through 2 repeaters (1-byte hashes): a repeater named
+  // "Hilltop RPT" at 40.123456,-75.654321
+  uint8_t mc[200];
+  size_t mn = 0;
+  mc[mn++] = (uint8_t)((MCT_ADVERT << 2) | MCR_FLOOD);
+  mc[mn++] = 0x02;            // path: 2 hops, 1-byte hashes
+  mc[mn++] = 0xA1; mc[mn++] = 0xB2;
+  const size_t adv = mn;
+  for (int i = 0; i < 32; ++i) mc[mn++] = (uint8_t)(0x10 + i);  // public key
+  mc[mn++] = 0x78; mc[mn++] = 0x56; mc[mn++] = 0x34; mc[mn++] = 0x12;  // timestamp
+  for (int i = 0; i < 64; ++i) mc[mn++] = 0xEE;                  // signature
+  mc[mn++] = 0x80 | 0x10 | MCN_REPEATER;
+  const int32_t la6 = 40123456, lo6 = -75654321;
+  for (int i = 0; i < 4; ++i) mc[mn++] = (uint8_t)((uint32_t)la6 >> (8 * i));
+  for (int i = 0; i < 4; ++i) mc[mn++] = (uint8_t)((uint32_t)lo6 >> (8 * i));
+  memcpy(mc + mn, "Hilltop RPT", 11); mn += 11;
+  MeshCorePacket mp;
+  CHECK(parseMeshCore(mc, mn, mp));
+  CHECK(mp.type == MCT_ADVERT && mp.route == MCR_FLOOD && mp.hops == 2 && mp.hash_size == 1 && mp.payload_off == adv);
+  MeshCoreAdvert ma;
+  CHECK(parseMeshCoreAdvert(mc + mp.payload_off, mp.payload_len, ma));
+  CHECK(ma.node_type == MCN_REPEATER && ma.has_pos && ma.lat_e6 == la6 && ma.lon_e6 == lo6);
+  CHECK(strcmp(ma.name, "Hilltop RPT") == 0 && ma.timestamp == 0x12345678u && ma.pubkey[0] == 0x10);
+  s = makeMeshCoreSighting(mp, ma, -101);
+  CHECK(s.kind == KIND_LORA_MESHCORE && s.sig_id == SIG_MESHCORE_REPEATER && s.category == CAT_LORA);
+  CHECK(s.addr[0] == 0x10 && s.addr[5] == 0x15 && s.channel == 2 && radioClass(s.kind) == 4);
+  CHECK(strcmp(sigName(SIG_MESHCORE_REPEATER), "MeshCore repeater") == 0);
+  // Transport-coded flood: 4 bytes of codes before the path length
+  uint8_t tf[8] = {(uint8_t)((MCT_GRP_TXT << 2) | MCR_TRANSPORT_FLOOD), 1, 2, 3, 4, 0x00, 0x11, 0x22};
+  CHECK(!parseMeshCore(tf, 8, mp));  // group message too short to be real
+  uint8_t tf3[9] = {(uint8_t)((MCT_GRP_TXT << 2) | MCR_TRANSPORT_FLOOD), 1, 2, 3, 4, 0x00, 0x11, 0x22, 0x33};
+  CHECK(parseMeshCore(tf3, 9, mp) && mp.payload_off == 6 && mp.payload_len == 3);
+  // 2-byte path hashes: 0x41 = 1 hop of 2 bytes
+  uint8_t h2[6] = {(uint8_t)((MCT_TXT_MSG << 2) | MCR_FLOOD), 0x41, 0xAA, 0xBB, 0x01, 0x02};
+  CHECK(parseMeshCore(h2, 6, mp) && mp.hash_size == 2 && mp.hops == 1 && mp.payload_off == 4);
+  // Not MeshCore: version bits set, reserved hash size, path past the end, unknown type
+  uint8_t bad1[4] = {0x40 | 0x11, 0x00, 1, 2};
+  CHECK(!parseMeshCore(bad1, 4, mp));
+  uint8_t bad2[4] = {0x11, 0xC0, 1, 2};
+  CHECK(!parseMeshCore(bad2, 4, mp));
+  uint8_t bad3[4] = {0x11, 0x05, 1, 2};
+  CHECK(!parseMeshCore(bad3, 4, mp));
+  uint8_t bad4[4] = {(uint8_t)(0x0D << 2) | 1, 0x00, 1, 2};
+  CHECK(!parseMeshCore(bad4, 4, mp));
+  // Adverts: unknown node type, too short, control character in the name
+  uint8_t ad[sizeof(mc)];
+  memcpy(ad, mc + adv, mn - adv);
+  const size_t an = mn - adv;
+  ad[100] = 0x80 | 0x07;
+  CHECK(!parseMeshCoreAdvert(ad, an, ma));
+  ad[100] = 0x80 | MCN_CHAT;  // no position: the name starts right after the flags
+  memcpy(ad + 101, "Rob T1000", 9);
+  CHECK(parseMeshCoreAdvert(ad, 110, ma) && ma.node_type == MCN_CHAT && !ma.has_pos && strcmp(ma.name, "Rob T1000") == 0);
+  CHECK(!parseMeshCoreAdvert(ad, 100, ma));
+  ad[101] = 0x07;
+  CHECK(!parseMeshCoreAdvert(ad, 110, ma));
+
+  // CONFIG carries the LoRa choice; an older master's CONFIG (without it) means auto
+  Config lc;
+  lc.cfg_version = 3;
+  lc.lora_mode = LM_MESHCORE;
+  lc.lora_slot = 0;
+  uint8_t lb[kMaxConfigSize];
+  size_t ln = encodeConfig(lc, lb, sizeof(lb));
+  Config ld;
+  CHECK(decodeConfig(lb, ln, ld) && ld.lora_mode == LM_MESHCORE && ld.lora_slot == 0);
+  lc.lora_mode = LM_LONGFAST;
+  lc.lora_slot = 33;
+  ln = encodeConfig(lc, lb, sizeof(lb));
+  CHECK(decodeConfig(lb, ln, ld) && ld.lora_mode == LM_LONGFAST && ld.lora_slot == 33);
+  CHECK(decodeConfig(lb, ln - 2, ld) && ld.lora_mode == LM_AUTO && ld.lora_slot == 0);
 }
 
 // A drive: every minute the access points around us are new ones; a tracker rides

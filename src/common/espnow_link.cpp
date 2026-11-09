@@ -69,12 +69,18 @@ bool EspNowLink::applyRate(const uint8_t mac[6], bool lr) {
   esp_now_rate_config_t c = {};
   if (lr) {
     c.phymode = WIFI_PHY_MODE_LR;
-    c.rate = lr_fast_ ? WIFI_PHY_RATE_LORA_500K : WIFI_PHY_RATE_LORA_250K;
+    c.rate = peerFast(mac) ? WIFI_PHY_RATE_LORA_500K : WIFI_PHY_RATE_LORA_250K;
   } else {
     c.phymode = WIFI_PHY_MODE_11B;
     c.rate = WIFI_PHY_RATE_1M_L;   // ESP-NOW's usual rate: the most robust non-LR one
   }
   return esp_now_set_peer_rate_config(mac, &c) == ESP_OK;
+}
+
+bool EspNowLink::peerFast(const uint8_t mac[6]) const {
+  for (uint8_t i = 0; i < n_lr_; ++i)
+    if (memcmp(lr_peers_[i], mac, 6) == 0 && lr_rate_[i] >= 0) return lr_rate_[i] > 0;
+  return lr_fast_;
 }
 
 bool EspNowLink::peerLongRange(const uint8_t mac[6]) const {
@@ -83,15 +89,23 @@ bool EspNowLink::peerLongRange(const uint8_t mac[6]) const {
   return false;
 }
 
-bool EspNowLink::setPeerLongRange(const uint8_t mac[6], bool on) {
+bool EspNowLink::setPeerLongRange(const uint8_t mac[6], bool on, int8_t rate) {
   if (on && !lr_rx_) return false;
   for (uint8_t i = 0; i < n_lr_; ++i)
     if (memcmp(lr_peers_[i], mac, 6) == 0) {
-      if (!on) { memmove(lr_peers_[i], lr_peers_[i + 1], (size_t)(n_lr_ - i - 1) * 6); --n_lr_; }
+      if (!on) {
+        memmove(lr_peers_[i], lr_peers_[i + 1], (size_t)(n_lr_ - i - 1) * 6);
+        memmove(&lr_rate_[i], &lr_rate_[i + 1], (size_t)(n_lr_ - i - 1));
+        --n_lr_;
+        lr_rate_[n_lr_] = -1;
+      } else {
+        lr_rate_[i] = rate;
+      }
       return esp_now_is_peer_exist(mac) ? applyRate(mac, on) : true;
     }
   if (on) {
     if (n_lr_ >= 8) return false;
+    lr_rate_[n_lr_] = rate;
     memcpy(lr_peers_[n_lr_++], mac, 6);
   }
   return esp_now_is_peer_exist(mac) ? applyRate(mac, on) : true;

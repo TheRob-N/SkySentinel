@@ -443,4 +443,20 @@ size_t DeviceTable::used() const {
   return n;
 }
 
+int bestNode(const Device& d, uint32_t now_ms, uint32_t window_ms, int8_t* rssi, uint8_t* count) {
+  int best = -1, latest = -1;
+  uint8_t n = 0;
+  for (uint8_t i = 0; i < kMaxNodes; ++i) {
+    if (d.node_rssi[i] == -127 || !d.node_ms[i]) continue;
+    if (latest < 0 || (int32_t)(d.node_ms[i] - d.node_ms[latest]) > 0) latest = i;
+    if ((int32_t)(now_ms - d.node_ms[i]) > (int32_t)window_ms) continue;
+    ++n;
+    if (best < 0 || d.node_rssi[i] > d.node_rssi[best]) best = i;
+  }
+  if (best < 0) best = latest;
+  if (count) *count = n;
+  if (rssi) *rssi = best >= 0 ? d.node_rssi[best] : -127;
+  return best;
+}
+
 }  // namespace ss

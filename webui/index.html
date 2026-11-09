@@ -128,7 +128,7 @@
   .rolecard[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
   .rolecard[aria-pressed="true"] b { color: var(--accent); }
   .field { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
-  .field input, #deviceKey, #wifiName, #wifiPass { background: var(--bg); border: 1px solid var(--line); border-radius: 3px; padding: 6px 8px; }
+  .field input, #deviceKey, #wifiName, #wifiPass, #neLoraMode, #neLoraSlot, #loraMode, #loraSlot { background: var(--bg); border: 1px solid var(--line); border-radius: 3px; padding: 6px 8px; }
   b.sub { display: block; font-size: 12px; letter-spacing: 1.5px; color: var(--muted); margin: 14px 0 6px; }
   .btn.danger { border-color: var(--crit); color: var(--crit); }
   .btn:disabled { opacity: .45; cursor: default; }
@@ -300,8 +300,9 @@
             <th data-k="a" title="Time since it was last heard">SEEN</th>
             <th data-k="h" title="How many of its broadcasts were received">HITS</th>
             <th data-k="k" title="Which radio heard it: Bluetooth LE, or Wi-Fi with the channel">RADIO</th>
+            <th data-k="nd" title="Which board hears it best right now (strongest in the last minute), and how many boards hear it. The device is nearest that board.">NODE</th>
           </tr></thead>
-          <tbody id="devRows"><tr><td colspan="11" class="dim">No data yet.</td></tr></tbody>
+          <tbody id="devRows"><tr><td colspan="12" class="dim">No data yet.</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -373,6 +374,19 @@
           <span class="hint">(500, the default: half the time on air per frame and far fewer reconnects; 250: the most reach)</span></span>
           <span class="seg"><button id="lr250">250 KBIT/S</button><button id="lr500">500 KBIT/S</button></span></div>
         <p class="hint" style="margin:4px 0 0" id="lrNote"></p>
+      </div>
+      <div id="loraOpts" hidden>
+        <b class="sub">THIS BOARD'S LORA RADIO</b>
+        <div class="row"><select id="loraMode" style="flex:1; min-width:180px">
+            <option value="auto">AUTO: take turns (LongFast, MediumFast, MeshCore, LoRaWAN)</option>
+            <optgroup label="Meshtastic"><option value="longfast">LongFast (US default)</option><option value="mediumfast">MediumFast</option>
+              <option value="mediumslow">MediumSlow</option><option value="longslow">LongSlow</option><option value="longmod">LongModerate</option>
+              <option value="shortfast">ShortFast</option><option value="shortslow">ShortSlow</option><option value="shortturbo">ShortTurbo</option></optgroup>
+            <optgroup label="Other"><option value="meshcore">MeshCore (910.525 MHz, US recommended)</option><option value="lorawan">LoRaWAN (sensors, trackers)</option></optgroup>
+          </select>
+          <span id="loraSlotWrap">slot <input id="loraSlot" type="number" min="0" max="208" style="width:64px" placeholder="auto"></span>
+          <button class="btn" id="loraSet">SET</button></div>
+        <p class="hint" style="margin:4px 0 0">AUTO takes turns; pin it to hear everything on one. For a node, set this on the master (CLUSTER &gt; EDIT).</p>
       </div>
       <div id="wifiOpts">
         <b class="sub">WI-FI ACCESS POINT</b>
@@ -606,8 +620,10 @@
             like headphones on a call. That takes a dedicated sniffer (Ubertooth).</li>
           <li><b>Quiet devices:</b> a watch or earbuds connected to a phone often stop advertising until they lose the phone.</li>
           <li><b>Other bands:</b> cellular, and GPS trackers that only talk over cellular. 915 MHz LoRa needs the Heltec node.</li>
-          <li><b>LoRa, one channel at a time:</b> the Heltec takes turns between Meshtastic LongFast, MediumFast and LoRaWAN, so it
-            can miss packets sent while it listens elsewhere. It reads headers only (who sent it, how many hops), never message contents.</li>
+          <li><b>LoRa, one channel at a time:</b> on AUTO the Heltec takes turns between Meshtastic LongFast, MediumFast, MeshCore and
+            LoRaWAN, so it can miss packets sent while it listens elsewhere. Pin it to one (CLUSTER &gt; EDIT &gt; LORA) to hear everything
+            there. It reads headers and public broadcasts only (who sent it, names and positions nodes announce, how many hops), never
+            message contents. MeshCore nodes show up when they send an advert (repeaters every few hours, companions when the owner sends one).</li>
           <li><b>Content:</b> SkySentinel reads broadcasts and headers, never anyone's data.</li>
         </ul>
       </details>
@@ -666,12 +682,33 @@
         <button class="btn" id="neSave">SAVE</button></div>
       <p class="hint" style="margin:6px 0 0">Shows on its card here and on the node's own screen.</p>
       <b class="sub">JOB</b>
-      <div class="seg"><button id="neAuto">AUTO</button><button id="neBle">BLUETOOTH ONLY</button><button id="neWifi">WI-FI ONLY</button><button id="neBoth">BOTH</button></div>
+      <div class="seg"><button id="neAuto">AUTO</button><button id="neBle">BLUETOOTH ONLY</button><button id="neWifi">WI-FI ONLY</button><button id="neBoth">BOTH</button><button id="neAll" title="Scans everything on its own; the other nodes share the rest">EVERYTHING</button></div>
       <p class="hint" style="margin:6px 0 0">AUTO lets the master share the work out. Pin a job when you know where a node is,
-        e.g. a box by the road on Wi-Fi only, or one inside the truck on Bluetooth only.</p>
+        e.g. a box by the road on Wi-Fi only, or one inside the truck on Bluetooth only. EVERYTHING is for a node somewhere
+        else (another room, the far side of the house): it scans every channel and Bluetooth on its own, taking turns, so it
+        can miss a little; the other nodes share the work between them as if it weren't there.</p>
+      <b class="sub">LINK TO THE MASTER</b>
+      <div class="seg"><button id="neLinkAuto">FOLLOW MASTER</button><button id="neLinkNormal">NORMAL</button><button id="neLink250">LR 250</button><button id="neLink500">LR 500</button></div>
+      <p class="hint" style="margin:6px 0 0" id="neLinkNote">FOLLOW MASTER uses SETTINGS &gt; Long Range. NORMAL is fastest, for nodes near the master.
+        LR reaches several times further: 500 for most, 250 for the most reach. A node that loses the master still calls in both ways.</p>
       <div id="neScreenRow">
         <b class="sub">SCREEN</b>
         <div class="seg"><button id="neScrFollow">FOLLOW MASTER</button><button id="neScrOn">ON</button><button id="neScrOff">OFF</button></div>
+      </div>
+      <div id="neLoraRow">
+        <b class="sub">LORA</b>
+        <div class="row"><select id="neLoraMode" style="flex:1; min-width:180px">
+            <option value="auto">AUTO: take turns (LongFast, MediumFast, MeshCore, LoRaWAN)</option>
+            <optgroup label="Meshtastic"><option value="longfast">LongFast (US default)</option><option value="mediumfast">MediumFast</option>
+              <option value="mediumslow">MediumSlow</option><option value="longslow">LongSlow</option><option value="longmod">LongModerate</option>
+              <option value="shortfast">ShortFast</option><option value="shortslow">ShortSlow</option><option value="shortturbo">ShortTurbo</option></optgroup>
+            <optgroup label="Other"><option value="meshcore">MeshCore (910.525 MHz, US recommended)</option><option value="lorawan">LoRaWAN (sensors, trackers)</option></optgroup>
+          </select>
+          <span id="neLoraSlotWrap">slot <input id="neLoraSlot" type="number" min="0" max="208" style="width:64px" placeholder="auto"></span>
+          <button class="btn" id="neLoraSet">SET</button></div>
+        <p class="hint" style="margin:6px 0 0" id="neLoraNote">One LoRa radio hears one setting at a time. AUTO takes turns, so it can miss packets
+          sent while it listens elsewhere; pin it to the one your area uses to hear everything there. Slot: leave empty for the
+          preset's usual frequency, or type the frequency slot a mesh moved to (as the Meshtastic app shows it).</p>
       </div>
       <div id="neSdRow">
         <b class="sub">SD CARD</b>
@@ -842,6 +879,8 @@ function openNodeEdit(id) {
   $("neBoth").disabled = !(n.caps & CAPS.ble);
   $("neScreenRow").hidden = !(n.hw === 5 || n.hw === 7);
   $("neSdRow").hidden = !n.sd || n.sd === "none";
+  $("neLoraRow").hidden = !(n.caps & CAPS.lora);
+  if (n.caps & CAPS.lora) { $("neLoraMode").value = n.lmode || "auto"; $("neLoraSlot").value = n.lslot || ""; loraSlotVis("ne"); }
   $("neForget").textContent = "FORGET";
   if (!rdl.on) $("neSdFiles").innerHTML = "";
   renderNodeEdit();
@@ -850,11 +889,23 @@ function openNodeEdit(id) {
 function renderNodeEdit() {
   const n = (state.status?.nodes || []).find((x) => x.id === editId);
   if (!n) return;
-  for (const [b, v] of [["neAuto", "auto"], ["neBle", "ble"], ["neWifi", "wifi"], ["neBoth", "both"]]) $(b).setAttribute("aria-pressed", (n.force || "auto") === v);
+  for (const [b, v] of [["neAuto", "auto"], ["neBle", "ble"], ["neWifi", "wifi"], ["neBoth", "both"], ["neAll", "all"]]) $(b).setAttribute("aria-pressed", (n.force || "auto") === v);
+  for (const [b, v] of [["neLinkAuto", "auto"], ["neLinkNormal", "normal"], ["neLink250", "lr250"], ["neLink500", "lr500"]]) $(b).setAttribute("aria-pressed", (n.lmd || "auto") === v);
+  $("neLink250").disabled = $("neLink500").disabled = n.lr !== undefined && !(n.lr & 1);
   for (const [b, v] of [["neScrFollow", -1], ["neScrOn", 1], ["neScrOff", 0]]) $(b).setAttribute("aria-pressed", (n.screen ?? -1) === v);
   $("neSdRow").hidden = !n.sd || n.sd === "none";
   $("neSdText").innerHTML = sdText(n.sd) || "";
   $("neSdFormat").disabled = n.sd === "formatting" || !n.online;
+}
+// Frequency slots only mean something for a Meshtastic preset
+const LORA_MESHTASTIC = ["longfast", "mediumfast", "mediumslow", "longslow", "longmod", "shortfast", "shortslow", "shortturbo"];
+function loraSlotVis(pre) {
+  const m = $(pre ? "neLoraMode" : "loraMode").value;
+  $(pre ? "neLoraSlotWrap" : "loraSlotWrap").hidden = !LORA_MESHTASTIC.includes(m);
+}
+function loraCmd(pre) {
+  const m = $(pre ? "neLoraMode" : "loraMode").value, sl = +$(pre ? "neLoraSlot" : "loraSlot").value || 0;
+  return `lora ${m}${LORA_MESHTASTIC.includes(m) && sl > 0 ? " " + sl : ""}`;
 }
 const nodeCmd = (c) => { if (state.link && editId) { state.link.send(`node ${editId} ${c}`); addEvent(0, `> node ${editId} ${c}`); } };
 function bindNodeEdit() {
@@ -880,9 +931,16 @@ function bindNodeEdit() {
   $("neBle").onclick = () => nodeCmd("role ble");
   $("neWifi").onclick = () => nodeCmd("role wifi");
   $("neBoth").onclick = () => nodeCmd("role both");
+  $("neAll").onclick = () => nodeCmd("role all");
+  $("neLinkAuto").onclick = () => nodeCmd("link auto");
+  $("neLinkNormal").onclick = () => nodeCmd("link normal");
+  $("neLink250").onclick = () => nodeCmd("link lr250");
+  $("neLink500").onclick = () => nodeCmd("link lr500");
   $("neScrFollow").onclick = () => nodeCmd("screen auto");
   $("neScrOn").onclick = () => nodeCmd("screen on");
   $("neScrOff").onclick = () => nodeCmd("screen off");
+  $("neLoraMode").onchange = () => loraSlotVis("ne");
+  $("neLoraSet").onclick = () => nodeCmd(loraCmd("ne"));
   $("neSdFormat").onclick = () => {
     const n = (state.status?.nodes || []).find((x) => x.id === editId);
     const who = n ? `${n.label ? n.label + " (" + n.id + ")" : n.id}` : editId;
@@ -1126,7 +1184,7 @@ function battText(b) {
 
 // Why a node last started, from its heartbeat
 const RST_WHY = { power: "power on / reset button", software: "reboot or update", crash: "CRASH", watchdog: "WATCHDOG (hung)",
-  brownout: "BROWNOUT (power dipped)", no_master: "restarted itself: no master for 5 min", deepsleep: "woke from sleep", usb: "reset over USB (flashing or a serial monitor)", radio: "restarted itself: Wi-Fi radio wasn't receiving", unknown: "unknown" };
+  brownout: "BROWNOUT (power dipped)", no_master: "restarted itself: no master for a while", stuck_tx: "restarted itself: link stuck in the Wi-Fi driver (known bug, back in seconds)", deepsleep: "woke from sleep", usb: "reset over USB (flashing or a serial monitor)", radio: "restarted itself: Wi-Fi radio wasn't receiving", unknown: "unknown" };
 const RST_BAD = new Set(["crash", "watchdog", "brownout", "no_master", "radio"]);
 const nodeUpSeen = {};
 function noteNodeRestarts(nodes) {
@@ -1168,8 +1226,8 @@ function renderCluster(s) {
     return `<div class="nodecard ${state[1]}">
       <div class="row" style="justify-content:space-between"><b>${n.label ? esc(n.label) + " \u00b7 " : ""}${esc(n.id)} \u00b7 ${HW_NAMES[n.hw] || "node"}</b>
         <span class="row"><span class="chip ${state[1]}">${state[0]}</span><button class="btn small" data-edit="${esc(n.id)}">EDIT</button></span></div>
-      <div>${nodeJob(n, s.cats)}${n.force && n.force !== "auto" ? ` <span class="tag">PINNED</span>` : ""}${n.screen === 0 ? ` <span class="tag">SCREEN OFF</span>` : ""}</div>
-      ${gpsText(n.gps, n.sats) || sdText(n.sd) || (n.lr & 2) ? `<div>${gpsText(n.gps, n.sats, n.id)} ${sdText(n.sd)}${n.lr & 2 ? ` <span class="chip ok" title="Talking to the master in Espressif Long Range mode">LR</span>` : ""}</div>` : ""}
+      <div>${nodeJob(n, s.cats)}${n.force === "all" ? ` <span class="tag">EVERYTHING</span>` : n.force && n.force !== "auto" ? ` <span class="tag">PINNED</span>` : ""}${n.screen === 0 ? ` <span class="tag">SCREEN OFF</span>` : ""}${n.lmode && n.lmode !== "auto" ? ` <span class="tag">LORA ${esc(n.lmode.toUpperCase())}${n.lslot ? " SLOT " + n.lslot : ""}</span>` : ""}</div>
+      ${gpsText(n.gps, n.sats) || sdText(n.sd) || (n.lr & 2) ? `<div>${gpsText(n.gps, n.sats, n.id)} ${sdText(n.sd)}${n.lr & 2 ? ` <span class="chip ok" title="Talking to the master in Espressif Long Range mode">LR${n.lmd === "lr250" ? " 250" : n.lmd === "lr500" ? " 500" : ""}</span>` : ""}</div>` : ""}
       <div class="mono">link ${n.link} dBm \u00b7 heard ${n.age ? n.age + " s ago" : "now"} \u00b7 packets ${n.frames} \u00b7 lost ${n.lost} (${loss}%)</div>
       <div class="hint mono">up ${fmtUp(n.up)} \u00b7 Wi-Fi frames ${n.wifi} \u00b7 ${bt}${battText(n.batt)} \u00b7 slot ${n.slot}</div>${healthText(n)}</div>`;
   }).join("");
@@ -1202,13 +1260,25 @@ function addrText(d) {
   if (d.k !== "l") return d.m;
   const b = d.m.split(":");
   if (d.s.startsWith("Meshtastic")) return "!" + b.slice(2).join("").toLowerCase();
+  if (d.s.startsWith("MeshCore")) return b.join("").toLowerCase();  // first bytes of its public key
   if (d.s.startsWith("LoRaWAN device joining")) return d.n || d.m;
   return "DevAddr " + b.slice(2).join("");
 }
 // Meshtastic: ch carries hops away (255 = arrived over the internet via MQTT)
 function loraHops(d) {
+  if (d.s.startsWith("MeshCore")) return d.ch ? `${d.ch} repeater hop${d.ch > 1 ? "s" : ""} away` : "direct";
   if (!d.s.startsWith("Meshtastic")) return "";
   return d.ch === 255 ? "via internet (MQTT)" : d.ch ? `${d.ch} hop${d.ch > 1 ? "s" : ""} away` : "direct";
+}
+// Board names by device-table slot: the master's own radio is slot 0 when it scans too.
+function nodeLabel(slot) {
+  const n = (state.status?.nodes || []).find((x) => x.slot === slot);
+  return n ? (n.label || n.id) : slot === 0 ? "master" : `slot ${slot}`;
+}
+// "Remote C5 (-85)" or "Remote C5 (-85) +2" when more boards hear it
+function heardByText(nb) {
+  if (!nb) return "";
+  return `${nodeLabel(nb[0])} (${nb[1]})${nb[2] > 1 ? ` +${nb[2] - 1}` : ""}`;
 }
 function radioText(d) {
   if (d.k === "w") return "Wi-Fi" + (d.ch ? " ch " + d.ch : "");
@@ -1505,7 +1575,7 @@ function handleLine(line) {
 function onNewDevice(d) {
   const sev = severity({ c: d.cat, s: d.sig, f: d.conf, x: d.strong ? 0x10 : 0 });
   if (sev === 0) return;
-  addEvent(sev, `${d.why === "new" ? "New" : "Upgraded"}: ${d.sig}${d.name ? " “" + d.name + "”" : ""} · ${d.mac} · ${d.rssi} dBm`);
+  addEvent(sev, `${d.why === "new" ? "New" : "Upgraded"}: ${d.sig}${d.name ? " “" + d.name + "”" : ""} · ${d.mac} · ${d.nb ? "heard by " + heardByText(d.nb) : d.rssi + " dBm"}`);
   if (sev === 2) showBanner(`${d.cat.toUpperCase()} · ${d.sig.toUpperCase()}`, `${d.mac} · ${d.rssi} dBm`);
 }
 
@@ -1625,7 +1695,7 @@ function renderStatus() {
     const radios = classicLike
       ? [`Classic BT ${s.bt ? "on" : "FAILED"}`, `inquiries ${s.inquiries}`, `Classic devices found ${s.classic}`, `Wi-Fi frames ${s.wifi_frames}`]
       : [`BLE ${s.ble_duty}%`, `Wi-Fi frames ${s.wifi_frames}`, `BLE adverts ${s.ble_adv}`];
-    if (s.lora) radios.push(s.lora.ok ? `LoRa: ${s.lora.on} · ${s.lora.pk} packets (Meshtastic ${s.lora.mesh}${s.lora.read ? `, ${s.lora.read} read on the public channel` : ""}, LoRaWAN ${s.lora.wan})` : "LoRa radio FAILED");
+    if (s.lora) radios.push(s.lora.ok ? `LoRa ${(s.lora.mode || "auto").toUpperCase()}: now ${s.lora.on}${s.lora.mhz ? ` ${(+s.lora.mhz).toFixed(3)} MHz` : ""}${s.lora.slot ? ` (slot ${s.lora.slot})` : ""} · ${s.lora.pk} packets (Meshtastic ${s.lora.mesh}${s.lora.read ? `, ${s.lora.read} read on the public channel` : ""}, MeshCore ${s.lora.mc ?? 0}${s.lora.mca ? `, ${s.lora.mca} adverts` : ""}, LoRaWAN ${s.lora.wan})` : "LoRa radio FAILED");
     if (s.cyd) radios.push(`screen ${s.cyd.chip.toUpperCase()} on ${s.cyd.board === "32e" ? "ESP32-32E" : s.cyd.board === "2432s028" ? "ESP32-2432S028" : "board not chosen"}${s.cyd.setup ? "" : " (setup on the screen)"}`);
     $("nodeDetail").textContent = [`${s.board === "cyd" ? "CYD node + touch dashboard" : s.board === "classic" ? "Classic node (original ESP32)" : "C5 node"}`, `scan ${s.scan || "-"}`, `ch ${s.ch}`, `${s.channels} channels`,
       ...radios, `send failures ${s.send_fail ?? 0}`, `key ${s.key ? "set" : "none"}`, s.pinned ? "master pinned" : "any master"].join(" · ");
@@ -1784,6 +1854,12 @@ function renderDeviceDialog() {
       ? "While it's on, this board's Wi-Fi scanning stays on one channel (an access point can't hop). BLE keeps scanning. Add a node for full Wi-Fi coverage."
       : "The master already stays on channel 6, so this costs nothing.";
   }
+  $("loraOpts").hidden = !s.lora || !s.lora.ok || s.role === "node";
+  if (!$("loraOpts").hidden && document.activeElement !== $("loraMode") && document.activeElement !== $("loraSlot")) {
+    $("loraMode").value = s.lora.mode || "auto";
+    $("loraSlot").value = s.lora.mslot || "";
+    loraSlotVis("");
+  }
   if (s.role === "master") {
     $("modeSplit").setAttribute("aria-pressed", s.mode !== "mirror");
     $("modeMirror").setAttribute("aria-pressed", s.mode === "mirror");
@@ -1802,6 +1878,7 @@ function renderDeviceDialog() {
     const noLr = nodes.filter((n) => n.lr !== undefined && !(n.lr & 1)).map((n) => n.label || n.id);
     $("lrNote").innerHTML = lr.ok === false ? "This master's radio can't do Long Range mode."
       : `Only nodes that can do LR use it (their CLUSTER card says <b>LR</b>); the rest stay on the normal link.${noLr.length ? ` Can't: ${noLr.map(esc).join(", ")}.` : ""}
+         A node's own LINK setting (CLUSTER &gt; EDIT) overrides this.${nodes.some((n) => n.lmd && n.lmd !== "auto") ? ` Set per node: ${nodes.filter((n) => n.lmd && n.lmd !== "auto").map((n) => esc(n.label || n.id) + " " + n.lmd.toUpperCase().replace("LR", "LR ")).join(", ")}.` : ""}
          A node that loses the master calls in both modes, so it always finds its way back.`;
   }
 }
@@ -1819,6 +1896,8 @@ $("lrOn").onclick = () => devSend("link lr on", true);
 $("lrOff").onclick = () => devSend("link lr off", true);
 $("lr250").onclick = () => devSend("link lr rate 250", true);
 $("lr500").onclick = () => devSend("link lr rate 500", true);
+$("loraMode").onchange = () => loraSlotVis("");
+$("loraSet").onclick = () => devSend(loraCmd(""), true);
 $("keySave").onclick = () => {
   const k = $("deviceKey").value.trim();
   if (!k || /\s/.test(k)) { $("deviceKey").setCustomValidity(k ? "No spaces" : "Type a key, or use CLEAR"); $("deviceKey").reportValidity(); return; }
@@ -1929,7 +2008,7 @@ $("factoryBtn").onclick = () => {
 function renderDevices() {
   const q = $("filter").value.trim().toLowerCase();
   let rows = state.devices.map((d) => ({ ...d, sev: d.fo && !isMine(d) ? Math.max(severity(d), d.c === "tracker" ? 2 : 1) : severity(d) }));
-  rows.forEach((d) => { d.mk = maker(d); });
+  rows.forEach((d) => { d.mk = maker(d); d.nd = d.nb ? nodeLabel(d.nb[0]) : ""; });
   if (q) rows = rows.filter((d) => `${d.m} ${d.s} ${d.n || ""} ${d.c} ${d.mk}`.toLowerCase().includes(q));
   const { k, dir } = state.sort;
   rows.sort((a, b) => {
@@ -1939,7 +2018,7 @@ function renderDevices() {
   });
   $("devCount").textContent = state.devices.length;
   $("winText").textContent = WIN_TEXT[listWin] || `${Math.round(listWin / 60)} min`;
-  if (!rows.length) { $("devRows").innerHTML = `<tr><td colspan="11" class="dim">${state.devices.length ? "Nothing matches the filter." : "No devices heard yet."}</td></tr>`; return; }
+  if (!rows.length) { $("devRows").innerHTML = `<tr><td colspan="12" class="dim">${state.devices.length ? "Nothing matches the filter." : "No devices heard yet."}</td></tr>`; return; }
   $("devRows").innerHTML = rows.map((d) => {
     const cat = CATS[CAT_INDEX[d.c]];
     const tags = [];
@@ -1960,6 +2039,7 @@ function renderDevices() {
       <td class="mono">${ago(d.a)}</td>
       <td class="mono dim">${d.h}</td>
       <td class="mono dim">${radioText(d)}</td>
+      <td class="mono dim">${d.nb ? esc(heardByText(d.nb)) : ""}</td>
     </tr>`;
   }).join("");
 }
@@ -2237,14 +2317,23 @@ function renderDetails() {
       8: "a waypoint", 32: "a reply", 34: "a people counter", 65: "store-and-forward", 66: "a range test", 67: "telemetry",
       70: "a traceroute", 71: "a neighbor list", 73: "a map report" };
     const [ch, p] = det.info.mesh.split(":");
-    const what = ch === "private" ? (p === "00" ? "a direct message, end-to-end encrypted (unreadable)"
+    const what = ch === "meshcore" ? "an advert with no name or position in it" : ch === "private" ? (p === "00" ? "a direct message, end-to-end encrypted (unreadable)"
         : `a packet on a private channel (hash 0x${esc(p)}), encrypted with its own key (unreadable)`)
       : `${PORTS[+p] || "packet type " + esc(p)} on the public ${esc(ch)} channel`;
     facts.push(["LAST PACKET", `${what} <span class="hint">${ago(det.info.mesh_age)} ago</span>`]);
   }
+  if (d.k === "l" && d.s.startsWith("MeshCore"))
+    facts.push(["MESHCORE", `<span class="hint">Found from its advert: the name, kind and position the owner chose to share (the advert's
+      signature isn't checked). Its other traffic only carries short hashes, so it isn't tied to this node.</span>`]);
   if (d.k === "l" && d.s.startsWith("Meshtastic") && !d.n)
     facts.push(["NO NAME YET", `<span class="hint">Meshtastic nodes send their name card every few hours and their position every 15 min or so
       (owner's settings). Details fill in as those packets arrive, if they're on the public default channel.</span>`]);
+  if (det.info?.heard?.length) {
+    // Every board that has heard it, strongest first: it's nearest the top one
+    const h = [...det.info.heard].sort((x, y) => (x[2] > 120) - (y[2] > 120) || y[1] - x[1]);
+    facts.push(["HEARD BY", h.map(([sl, r, age], i) => `${i === 0 && age <= 120 ? "<b>" : ""}${esc(nodeLabel(sl))} ${r} dBm${i === 0 && age <= 120 ? "</b>" : ""}
+      <span class="hint">${age ? ago(age) + " ago" : "now"}</span>`).join("<br>") + `<br><span class="hint">Strongest = closest board. With boards in different rooms, that tells you which part of the house it's in.</span>`]);
+  }
   if (det.info?.batt !== undefined) facts.push(["BATTERY", det.info.batt > 100 ? "on external power" : `${det.info.batt}% <span class="hint">(as the node reports it)</span>`]);
   const nameOf = (mac) => { const x = state.devices.find((y) => y.m === mac); return x ? (x.n ? `\u201c${esc(x.n)}\u201d` : esc(x.s)) : null; };
   if (det.info?.link) {

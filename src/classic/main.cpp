@@ -60,7 +60,10 @@ extern "C" bool btInUse() { return true; }
 
 static constexpr uint32_t kHelloEveryMs = 1000;
 static constexpr uint32_t kHeartbeatEveryMs = 5000;
-static constexpr uint32_t kCoreLostMs = 20000;
+// Re-pair after this long without hearing the master. Was 20 s: a classic ESP32 doing
+// Classic Bluetooth inquiry can miss the master's replies for that long and then spent
+// ~30 s re-pairing (a DevKit did it every 20-30 min while the master heard it fine).
+static constexpr uint32_t kCoreLostMs = 45000;
 #ifdef SS_CYD
 // The dashboard refreshes with every CONFIG, so check in every second and wait a bit
 // longer for the answer.
@@ -302,10 +305,19 @@ static void goHome() {
   }
 }
 
+// Remembered across restarts: was the master's last word "use Long Range"? A node that
+// restarts with no master around would otherwise call at normal speed only.
+static bool lrRemembered = false;
+static void rememberLr(bool lr, bool fast) {
+  if (lr != lrRemembered) prefs.putBool("lrlink", lr);
+  if (lr && fast != prefs.getBool("lrfast", true)) prefs.putBool("lrfast", fast);
+  lrRemembered = lr;
+}
+
 static void sendHello() {
-  {  // told to use Long Range: call for a lost master in both modes, in turns
+  {  // told to use Long Range (now or before a restart): call in both modes, in turns
     static bool lr = false;
-    const bool want = (cfg.node_flags & NF_LONG_RANGE) && espLink.lrCapable();
+    const bool want = ((cfg.node_flags & NF_LONG_RANGE) || lrRemembered) && espLink.lrCapable();
     lr = want ? !lr : false;
     espLink.setBroadcastLongRange(lr);
   }
@@ -380,6 +392,7 @@ static void flushReports(uint32_t now) {
 static void unpairAndRestart() {
   prefs.remove("key");
   prefs.remove("core");
+  prefs.remove("lrlink");
   Out.println("{\"t\":\"ack\",\"cmd\":\"pair\",\"reboot\":true}");
   Out.println("[pair] cluster key dropped, restarting to pair again");
   Serial.flush();
@@ -478,6 +491,7 @@ static void handlePacket(const RxPacket& p) {
     if (la != lb || memcmp(a, b, la) != 0) applyConfig(c);
     espLink.setLrFast((c.node_flags & NF_LR_FAST) != 0);
     espLink.setPeerLongRange(coreMac, (c.node_flags & NF_LONG_RANGE) != 0);
+    rememberLr((c.node_flags & NF_LONG_RANGE) != 0, (c.node_flags & NF_LR_FAST) != 0);
   }
 }
 
@@ -514,7 +528,7 @@ static void emitStatus(uint32_t now) {
 #ifdef SS_CYD
   cyd::describe(Out);
 #endif
-  Out.printf(",\"send_fail\":%lu}\n", (unsigned long)espLink.sendFailures());
+  Out.printf(",\"send_fail\":%lu,\"in_flight\":%lu}\n", (unsigned long)espLink.sendFailures(), (unsigned long)espLink.inFlight());
 }
 
 static void saveAndReboot(const char* why) {
@@ -598,6 +612,8 @@ void setup() {
   esp_read_mac(myMac, ESP_MAC_WIFI_STA);
   myId = nodeIdFromMac(myMac);
   if (!espLink.begin(clusterKey.c_str(), kHomeChannel, 16)) Out.println("[classic] ESP-NOW init FAILED");
+  espLink.setLrFast(prefs.getBool("lrfast", true));
+  lrRemembered = !unpaired && prefs.getBool("lrlink", false);
   if (corePinned && !unpaired) espLink.addPeer(pinnedCore);
   if (unpaired) nodePair.begin(&espLink, myMac, myId, SS_NODE_HW, CAP_WIFI24 | CAP_BT_CLASSIC
 #ifdef SS_CYD
@@ -640,9 +656,28 @@ void setup() {
   }
 }
 
+// esp-idf #19269: the driver can drop a frame without ever reporting back, and keeps its
+// slot. The C5/S3 firmware restarts after 1.5 s of that; this firmware had no check, so a
+// CYD ran with fewer and fewer slots for a day (send failures 80 -> 15,000, loss 3% -> 9%).
+// Longer limit here: Classic Bluetooth inquiry can hold the radio for over a second.
+static constexpr uint32_t kTxStuckMs = 5000;
+static void checkStuckTx(uint32_t now) {
+  static uint32_t since = 0;
+  if (!espLink.inFlight()) { since = 0; return; }
+  if (!since) { since = now ? now : 1; return; }
+  if (now - since < kTxStuckMs) return;
+  Out.printf("[link] %lu frames stuck in the Wi-Fi driver for %lu ms (send failures %lu, heap %lu), restarting\n",
+             (unsigned long)espLink.inFlight(), (unsigned long)(now - since), (unsigned long)espLink.sendFailures(),
+             (unsigned long)ESP.getFreeHeap());
+  Serial.flush();
+  delay(100);
+  ESP.restart();
+}
+
 void loop() {
   const uint32_t now = millis();
   handleSerial();
+  checkStuckTx(now);
 
   RxItem it;
   while (xQueueReceive(hitQueue, &it, 0) == pdTRUE) {

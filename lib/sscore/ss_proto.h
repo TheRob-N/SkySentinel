@@ -105,6 +105,7 @@ enum Kind : uint8_t {
   KIND_BT_CLASSIC      = 0x20,  // Classic Bluetooth, from an original-ESP32 node (inquiry)
   KIND_LORA_MESHTASTIC = 0x30,  // sub-GHz node (Heltec Wireless Tracker): addr = node id, zero padded
   KIND_LORAWAN         = 0x31,  //   addr = DevAddr zero padded, or last 6 bytes of DevEUI (join)
+  KIND_LORA_MESHCORE   = 0x32,  //   addr = first 6 bytes of the node's public key
 };
 inline bool kindIsWifi(uint8_t k) { return k >= KIND_WIFI_BEACON && k <= KIND_WIFI_OTHER; }
 inline bool kindIsBle(uint8_t k) { return k == KIND_BLE_ADV; }
@@ -144,7 +145,10 @@ enum Caps : uint8_t {
   CAP_DASH       = 0x80,  // has a touch screen and wants MSG_DASH (CYD)
 };
 
-enum Role : uint8_t { ROLE_AUTO = 0, ROLE_WIFI = 1, ROLE_BLE = 2, ROLE_BOTH = 3 };
+enum Role : uint8_t { ROLE_AUTO = 0, ROLE_WIFI = 1, ROLE_BLE = 2, ROLE_BOTH = 3,
+                     // Master-side pin only (never sent): this node scans the whole plan on
+                     // its own, outside the split; the other nodes share the work between them.
+                     ROLE_ALL = 4 };
 
 enum EventType : uint8_t {
   EV_DEAUTH_FLOOD   = 1,
@@ -200,8 +204,10 @@ struct Config {  // 18 bytes + optional node_flags (older nodes ignore it)
   uint8_t  ble_duty_pct  = 100;
   uint8_t  node_flags    = 0;     // NodeFlags; absent on the wire from older masters = 0
   char     label[kMaxLabel + 1] = {0};  // the name given to this node on the master (optional)
+  uint8_t  lora_mode     = 0;     // LoRa boards: what to listen to (ss_lora.h LoraMode, 0 = auto)
+  uint8_t  lora_slot     = 0;     //   Meshtastic frequency slot, 1-based (0 = the preset's default)
 };
-constexpr size_t kMaxConfigSize = 18 + 1 + 1 + kMaxLabel;
+constexpr size_t kMaxConfigSize = 18 + 1 + 1 + kMaxLabel + 2;
 
 // Pairing (see ss_pair.h). Sent in the clear: the public keys are public, and the
 // cluster key travels sealed with the X25519 shared secret.
@@ -285,6 +291,7 @@ enum ResetWhy : uint8_t {
   RW_CRASH = 3, RW_WATCHDOG = 4, RW_BROWNOUT = 5, RW_NO_MASTER = 6 /* restarted itself after losing the master */,
   RW_DEEPSLEEP = 7, RW_USB = 8 /* reset over USB: flashing, or a serial monitor opening the port */,
   RW_RADIO = 9 /* restarted itself: its Wi-Fi radio heard nothing (didn't start properly) */,
+  RW_STUCK_TX = 10 /* restarted itself: frames stuck in the Wi-Fi driver (esp-idf #19269) or sends refused */,
 };
 const char* resetWhyName(uint8_t r);  // "power", "crash", ...
 
@@ -325,7 +332,8 @@ enum NameWhat : uint8_t {
   NAME_POS    = 2,   // where the device says it is ("lat,lon,alt_m"): Meshtastic position
   NAME_LINK   = 3,   // the access point (BSSID, "AA:BB:CC:DD:EE:FF") this client is connected to
   NAME_BATT   = 4,   // battery percent the device reports ("87"; 101 = on external power)
-  NAME_MESH   = 5,   // last Meshtastic packet: "LongFast:67" (channel:port) or "private:3A" (channel hash)
+  NAME_MESH   = 5,   // last Meshtastic packet: "LongFast:67" (channel:port) or "private:3A" (channel hash);
+                     // MeshCore: "meshcore:advert" (what it last sent)
   NAME_RID_ID = 6,   // drone Remote ID: "serial|id_type|ua_type"
   NAME_RID_MOVE = 7, // drone motion: "height_m,speed_cms,dir,status" (position goes as NAME_POS)
   NAME_RID_OP = 8,   // where the drone's pilot is: "lat,lon"

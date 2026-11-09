@@ -137,6 +137,7 @@ size_t encodeConfig(const Config& m, uint8_t* out, size_t cap) {
   w.u8(m.node_flags);
   const uint8_t ll = (uint8_t)strnlen(m.label, kMaxLabel);
   w.u8(ll); w.bytes((const uint8_t*)m.label, ll);
+  w.u8(m.lora_mode); w.u8(m.lora_slot);
   return w.ok() ? w.size() : 0;
 }
 bool decodeConfig(const uint8_t* p, size_t n, Config& m) {
@@ -152,6 +153,8 @@ bool decodeConfig(const uint8_t* p, size_t n, Config& m) {
     if (ll > kMaxLabel) return false;
     r.bytes((uint8_t*)m.label, ll);
   }
+  m.lora_mode = r.remaining() ? r.u8() : 0;
+  m.lora_slot = r.remaining() ? r.u8() : 0;
   return r.ok();
 }
 
@@ -223,7 +226,7 @@ const char* sdStateName(uint8_t s) {
 }
 
 const char* resetWhyName(uint8_t r) {
-  static const char* const k[] = {"unknown", "power", "software", "crash", "watchdog", "brownout", "no_master", "deepsleep", "usb", "radio"};
+  static const char* const k[] = {"unknown", "power", "software", "crash", "watchdog", "brownout", "no_master", "deepsleep", "usb", "radio", "stuck_tx"};
   return r < sizeof(k) / sizeof(k[0]) ? k[r] : "unknown";
 }
 

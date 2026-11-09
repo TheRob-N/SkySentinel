@@ -1,4 +1,4 @@
-// LoRa (915 MHz) packet parsing for the sub-GHz node: Meshtastic and LoRaWAN.
+// LoRa (915 MHz) packet parsing for the sub-GHz node: Meshtastic, MeshCore and LoRaWAN.
 // Headers, plus Meshtastic packets on the public default channel (LongFast /
 // MediumFast with the published default key, which every Meshtastic radio ships with):
 // node names and the positions they broadcast. Private channels and LoRaWAN data stay
@@ -28,6 +28,33 @@ extern const LoraPreset kMeshLongFast;    // 906.875 MHz SF11 250 kHz (default)
 extern const LoraPreset kMeshMediumFast;  // 913.125 MHz SF9 250 kHz (many meshes moved here)
 // LoRaWAN uplink channel n (0-7): 903.9 + 0.2 n MHz, 125 kHz, SF7-10
 float loraWanUplinkMhz(uint8_t n);
+// MeshCore's US/Canada recommended setting: 910.525 MHz, 62.5 kHz, SF7, 4/5, private sync word.
+extern const LoraPreset kMeshCoreUs;
+
+// Meshtastic US frequency for a channel: slot = djb2(name) % slots (902-928 MHz cut into
+// bw-wide slots), unless the owner picked a slot (1-based, as the Meshtastic app shows it).
+uint16_t meshUsSlots(float bw_khz);
+uint16_t meshUsDefaultSlot(const char* channel_name, float bw_khz);  // 1-based
+float meshUsMhz(float bw_khz, uint16_t slot);                         // slot 1-based
+
+// What the LoRa radio listens to, chosen per node on the master (or "lora ..." on the
+// board's serial port). AUTO takes turns: LongFast, MediumFast, MeshCore, LoRaWAN.
+enum LoraMode : uint8_t {
+  LM_AUTO = 0,
+  LM_LONGFAST, LM_MEDIUMFAST, LM_MEDIUMSLOW, LM_LONGSLOW, LM_LONGMOD,
+  LM_SHORTFAST, LM_SHORTSLOW, LM_SHORTTURBO,   // Meshtastic modem presets
+  LM_MESHCORE,
+  LM_LORAWAN,
+  LM_COUNT
+};
+const char* loraModeName(uint8_t mode);           // "auto", "longfast", ..., "meshcore", "lorawan"
+bool parseLoraMode(const char* s, uint8_t& mode);  // case-insensitive name
+bool loraModeIsMeshtastic(uint8_t mode);
+// The radio settings for a single-preset mode (not AUTO / LoRaWAN). slot 0 = the preset's
+// default channel slot; 1..N picks another (Meshtastic only; ignored for MeshCore).
+// The preset's name is Meshtastic's default channel name ("LongFast"), used to read the
+// public channel.
+bool loraModePreset(uint8_t mode, uint16_t slot, LoraPreset& out);
 
 // Meshtastic over-the-air header (16 bytes, little-endian), from the protocol docs.
 struct MeshHeader {
@@ -70,11 +97,43 @@ struct LoraWanFrame {
 };
 bool parseLoraWan(const uint8_t* p, size_t n, LoraWanFrame& f);
 
+// MeshCore (v1) packets. Only adverts say who sent them (the node's public key, its
+// name, its kind and often its position, all in the clear); everything else carries
+// 1-byte hashes, so it is counted but not turned into a device.
+enum MeshCoreRoute : uint8_t { MCR_TRANSPORT_FLOOD = 0, MCR_FLOOD = 1, MCR_DIRECT = 2, MCR_TRANSPORT_DIRECT = 3 };
+enum MeshCoreType : uint8_t {
+  MCT_REQ = 0, MCT_RESPONSE, MCT_TXT_MSG, MCT_ACK, MCT_ADVERT, MCT_GRP_TXT, MCT_GRP_DATA,
+  MCT_ANON_REQ, MCT_PATH, MCT_TRACE, MCT_MULTIPART, MCT_CONTROL, MCT_RAW_CUSTOM = 0x0F
+};
+struct MeshCorePacket {
+  uint8_t route = 0, type = 0;
+  uint8_t hash_size = 1, hops = 0;  // path: hops entries of hash_size bytes (repeaters it went through)
+  size_t payload_off = 0, payload_len = 0;
+};
+bool parseMeshCore(const uint8_t* p, size_t n, MeshCorePacket& m);
+const char* meshCoreTypeName(uint8_t type);  // "advert", "group text", ...
+
+enum MeshCoreNode : uint8_t { MCN_CHAT = 1, MCN_REPEATER = 2, MCN_ROOM = 3, MCN_SENSOR = 4 };
+struct MeshCoreAdvert {
+  uint8_t pubkey[32] = {0};
+  uint32_t timestamp = 0;
+  uint8_t node_type = 0;
+  bool has_pos = false;
+  int32_t lat_e6 = 0, lon_e6 = 0;
+  char name[kMaxName + 1] = {0};
+};
+// The advert payload (pubkey, time, signature, then flags/position/name). The signature
+// isn't checked.
+bool parseMeshCoreAdvert(const uint8_t* p, size_t n, MeshCoreAdvert& a);
+
 // Sightings. addr = node id / DevAddr in the last 4 bytes (MSB first), or the last
 // 6 bytes of the DevEUI for a join. channel = hops away for Meshtastic (0 = heard
 // directly), 0xFF = arrived over MQTT (not actually nearby).
 Sighting makeMeshSighting(const MeshHeader& h, int8_t rssi);
 Sighting makeLoraWanSighting(const LoraWanFrame& f, int8_t rssi);
+// MeshCore: addr = the first 6 bytes of its public key (MeshCore shows the first bytes
+// as the node's id too); channel = hops (the flood path's length, 0 = heard directly).
+Sighting makeMeshCoreSighting(const MeshCorePacket& m, const MeshCoreAdvert& a, int8_t rssi);
 constexpr uint8_t kLoraViaMqtt = 0xFF;
 
 }  // namespace ss

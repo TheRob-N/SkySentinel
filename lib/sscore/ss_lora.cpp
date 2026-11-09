@@ -7,11 +7,68 @@
 namespace ss {
 
 // Meshtastic US: slot = djb2(channel name) % 104 (250 kHz slots from 902 MHz); LongFast
-// lands on slot 20 = 906.875 MHz as the Meshtastic docs state, MediumFast on 913.125.
+// lands on slot 20 = 906.875 MHz as the Meshtastic docs state, MediumFast on 45 = 913.125.
 const LoraPreset kMeshLongFast = {"LongFast", 906.875f, 250.0f, 11, 5, 0x2B, 16};
 const LoraPreset kMeshMediumFast = {"MediumFast", 913.125f, 250.0f, 9, 5, 0x2B, 16};
 
 float loraWanUplinkMhz(uint8_t n) { return 903.9f + 0.2f * (float)(n & 7); }
+
+// MeshCore app "USA/Canada (Recommended)". Receive-side preamble: the SX1262 only needs
+// to see at least this many symbols, MeshCore sends more.
+const LoraPreset kMeshCoreUs = {"MeshCore", 910.525f, 62.5f, 7, 5, 0x12, 8};
+
+uint16_t meshUsSlots(float bw_khz) { return bw_khz > 0 ? (uint16_t)(26000.0f / bw_khz) : 0; }
+
+uint16_t meshUsDefaultSlot(const char* name, float bw_khz) {
+  uint32_t h = 5381;  // djb2, as the Meshtastic firmware hashes the channel name
+  for (const char* c = name; c && *c; ++c) h = ((h << 5) + h) + (uint8_t)*c;
+  const uint16_t n = meshUsSlots(bw_khz);
+  return n ? (uint16_t)(h % n + 1) : 0;
+}
+
+float meshUsMhz(float bw_khz, uint16_t slot) {
+  // 902 MHz + half a channel + (slot - 1) channels; double keeps 62.5 kHz steps exact
+  return (float)(902.0 + bw_khz / 2000.0 + (double)(slot ? slot - 1 : 0) * bw_khz / 1000.0);
+}
+
+// Meshtastic modem presets: default channel name, bandwidth, SF, coding rate.
+struct MeshPresetDef { uint8_t mode; const char* name; float bw; uint8_t sf, cr; };
+static const MeshPresetDef kMeshPresets[] = {
+    {LM_LONGFAST, "LongFast", 250.0f, 11, 5},     {LM_MEDIUMFAST, "MediumFast", 250.0f, 9, 5},
+    {LM_MEDIUMSLOW, "MediumSlow", 250.0f, 10, 5}, {LM_LONGSLOW, "LongSlow", 125.0f, 12, 8},
+    {LM_LONGMOD, "LongMod", 125.0f, 11, 8},       {LM_SHORTFAST, "ShortFast", 250.0f, 7, 5},
+    {LM_SHORTSLOW, "ShortSlow", 250.0f, 8, 5},    {LM_SHORTTURBO, "ShortTurbo", 500.0f, 7, 5},
+};
+static const char* const kModeNames[LM_COUNT] = {"auto",      "longfast",  "mediumfast", "mediumslow",
+                                                 "longslow",  "longmod",   "shortfast",  "shortslow",
+                                                 "shortturbo", "meshcore", "lorawan"};
+
+const char* loraModeName(uint8_t mode) { return mode < LM_COUNT ? kModeNames[mode] : "auto"; }
+
+bool parseLoraMode(const char* s, uint8_t& mode) {
+  if (!s) return false;
+  for (uint8_t m = 0; m < LM_COUNT; ++m) {
+    const char* a = kModeNames[m];
+    const char* b = s;
+    while (*a && *b && (*b | 0x20) == *a) { ++a; ++b; }
+    if (!*a && !*b) { mode = m; return true; }
+  }
+  return false;
+}
+
+bool loraModeIsMeshtastic(uint8_t mode) { return mode >= LM_LONGFAST && mode <= LM_SHORTTURBO; }
+
+bool loraModePreset(uint8_t mode, uint16_t slot, LoraPreset& out) {
+  if (mode == LM_MESHCORE) { out = kMeshCoreUs; return true; }
+  for (const MeshPresetDef& d : kMeshPresets)
+    if (d.mode == mode) {
+      if (slot > meshUsSlots(d.bw)) slot = 0;
+      if (!slot) slot = meshUsDefaultSlot(d.name, d.bw);
+      out = {d.name, meshUsMhz(d.bw, slot), d.bw, d.sf, d.cr, 0x2B, 16};
+      return true;
+    }
+  return false;
+}
 
 static uint32_t le32(const uint8_t* p) {
   return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
@@ -85,6 +142,97 @@ Sighting makeMeshSighting(const MeshHeader& h, int8_t rssi) {
   if (h.via_mqtt) s.channel = kLoraViaMqtt;
   else s.channel = h.hop_start >= h.hop_limit ? (uint8_t)(h.hop_start - h.hop_limit) : 0;
   return s;
+}
+
+Sighting makeMeshCoreSighting(const MeshCorePacket& m, const MeshCoreAdvert& a, int8_t rssi) {
+  const uint16_t sig = a.node_type == MCN_CHAT       ? SIG_MESHCORE_CHAT
+                       : a.node_type == MCN_REPEATER ? SIG_MESHCORE_REPEATER
+                       : a.node_type == MCN_ROOM     ? SIG_MESHCORE_ROOM
+                       : a.node_type == MCN_SENSOR   ? SIG_MESHCORE_SENSOR
+                                                     : SIG_MESHCORE_NODE;
+  Sighting s = loraBase(KIND_LORA_MESHCORE, sig, 90, rssi);
+  memcpy(s.addr, a.pubkey, 6);
+  s.channel = m.hops;
+  return s;
+}
+
+bool parseMeshCore(const uint8_t* p, size_t n, MeshCorePacket& m) {
+  if (!p || n < 2) return false;
+  const uint8_t hdr = p[0];
+  if ((hdr >> 6) != 0) return false;  // payload version 1 is 0 on the air
+  m.route = hdr & 0x03;
+  m.type = (uint8_t)((hdr >> 2) & 0x0F);
+  if (m.type > MCT_CONTROL && m.type != MCT_RAW_CUSTOM) return false;
+  size_t i = 1;
+  if (m.route == MCR_TRANSPORT_FLOOD || m.route == MCR_TRANSPORT_DIRECT) i += 4;  // two transport codes
+  if (i >= n) return false;
+  const uint8_t pl = p[i++];
+  m.hash_size = (uint8_t)((pl >> 6) + 1);
+  if (m.hash_size > 3) return false;  // reserved
+  m.hops = pl & 0x3F;
+  const size_t pathBytes = (size_t)m.hops * m.hash_size;
+  if (i + pathBytes > n) return false;
+  i += pathBytes;
+  m.payload_off = i;
+  m.payload_len = n - i;
+  // Every real payload has something in it; group messages at least a hash + MAC.
+  if (!m.payload_len) return false;
+  if ((m.type == MCT_GRP_TXT || m.type == MCT_GRP_DATA) && m.payload_len < 3) return false;
+  return true;
+}
+
+const char* meshCoreTypeName(uint8_t t) {
+  switch (t) {
+    case MCT_REQ: return "request";
+    case MCT_RESPONSE: return "response";
+    case MCT_TXT_MSG: return "direct message";
+    case MCT_ACK: return "ack";
+    case MCT_ADVERT: return "advert";
+    case MCT_GRP_TXT: return "group text";
+    case MCT_GRP_DATA: return "group data";
+    case MCT_ANON_REQ: return "login / anon request";
+    case MCT_PATH: return "path";
+    case MCT_TRACE: return "trace";
+    case MCT_MULTIPART: return "multipart";
+    case MCT_CONTROL: return "control";
+    case MCT_RAW_CUSTOM: return "custom";
+    default: return "?";
+  }
+}
+
+bool parseMeshCoreAdvert(const uint8_t* p, size_t n, MeshCoreAdvert& a) {
+  // pubkey(32) timestamp(4) signature(64) flags(1) [lat(4) lon(4)] [feat1(2)] [feat2(2)] [name]
+  if (!p || n < 101) return false;
+  memcpy(a.pubkey, p, 32);
+  a.timestamp = le32(p + 32);
+  size_t i = 100;
+  const uint8_t flags = p[i++];
+  a.node_type = flags & 0x0F;
+  if (a.node_type < MCN_CHAT || a.node_type > MCN_SENSOR) return false;
+  a.has_pos = (flags & 0x10) != 0;
+  if (a.has_pos) {
+    if (i + 8 > n) return false;
+    a.lat_e6 = (int32_t)le32(p + i);
+    a.lon_e6 = (int32_t)le32(p + i + 4);
+    i += 8;
+    if (a.lat_e6 < -90000000 || a.lat_e6 > 90000000 || a.lon_e6 < -180000000 || a.lon_e6 > 180000000) return false;
+  }
+  if (flags & 0x20) i += 2;
+  if (flags & 0x40) i += 2;
+  if (i > n) return false;
+  memset(a.name, 0, sizeof(a.name));
+  if (flags & 0x80) {
+    size_t k = 0;
+    for (; i < n && p[i] && k < kMaxName; ++i) {
+      const uint8_t c = p[i];
+      if (c < 0x20 || c == 0x7F) return false;  // names are text (UTF-8 allowed)
+      a.name[k++] = (char)c;
+    }
+  }
+  // The public key is never all zeros.
+  uint8_t any = 0;
+  for (uint8_t b : a.pubkey) any |= b;
+  return any != 0;
 }
 
 Sighting makeLoraWanSighting(const LoraWanFrame& f, int8_t rssi) {

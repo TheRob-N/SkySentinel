@@ -25,7 +25,7 @@ MSG = {1: "hello", 2: "welcome", 3: "config", 4: "heartbeat", 5: "sightings", 6:
 CATEGORIES = ["none", "flock", "bodycam", "tracker", "glasses", "drone", "skimmer", "pentest",
               "phone", "audio", "wearable", "other_ble", "other_wifi", "lora", "vehicle"]
 KINDS = {0x01: "wifi_beacon", 0x02: "wifi_probe_req", 0x03: "wifi_probe_resp", 0x04: "wifi_data",
-         0x05: "wifi_other", 0x10: "ble_adv", 0x20: "bt_classic", 0x30: "lora_meshtastic", 0x31: "lorawan"}
+         0x05: "wifi_other", 0x10: "ble_adv", 0x20: "bt_classic", 0x30: "lora_meshtastic", 0x31: "lorawan", 0x32: "lora_meshcore"}
 CHANNELS = list(range(1, 14)) + [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124,
                                  128, 132, 136, 140, 144, 149, 153, 157, 161, 165]
 
@@ -154,7 +154,7 @@ def decode_payload(f: Frame) -> dict:
             health = {}
             if len(p) >= 27:
                 rst, heap, heapmin, losses = struct.unpack("<BHHH", p[20:27])
-                health = {"reset": ["unknown", "power", "software", "crash", "watchdog", "brownout", "no_master", "deepsleep", "usb", "radio"][rst] if rst < 10 else rst,
+                health = {"reset": ["unknown", "power", "software", "crash", "watchdog", "brownout", "no_master", "deepsleep", "usb", "radio", "stuck_tx"][rst] if rst < 11 else rst,
                           "heap_kb": heap, "heap_min_kb": heapmin, "losses": losses}
             return {"uptime_s": up, "cfg_version": ver, "channel": ch,
                     "batt_pct": None if batt == 255 else batt, "temp_c": None if temp == -128 else temp,

@@ -822,6 +822,11 @@ const char* sigName(uint16_t id) {
     case SIG_MESHTASTIC: return "Meshtastic node";
     case SIG_LORAWAN_DEVICE: return "LoRaWAN sensor / tracker";
     case SIG_LORAWAN_JOIN: return "LoRaWAN device joining a network";
+    case SIG_MESHCORE_CHAT: return "MeshCore companion (phone radio)";
+    case SIG_MESHCORE_REPEATER: return "MeshCore repeater";
+    case SIG_MESHCORE_ROOM: return "MeshCore room server";
+    case SIG_MESHCORE_SENSOR: return "MeshCore sensor";
+    case SIG_MESHCORE_NODE: return "MeshCore node";
     case SIG_TESLA_BLE: return "Tesla (phone-key Bluetooth)";
     case SIG_WIFI_CLIENT_PRIVATE: return "Phone, tablet or laptop on Wi-Fi (private address)";
     case SIG_WIFI_CLIENT: return "Wi-Fi device, connected (fixed address)";

@@ -13,6 +13,7 @@ namespace ss {
 
 extern bool g_jsonOn;  // live JSON stream (USB serial, and Wi-Fi viewers)
 extern bool g_uiOn;    // web UI attached over USB: also stream the live device list ("ui on")
+extern volatile uint32_t g_usbWriteMs;  // last time Out wrote to USB (0 = never)
 extern bool g_webOn;   // someone is watching over the board's Wi-Fi access point
 
 // Everything the board reports goes through Out: it writes to USB serial and, line
