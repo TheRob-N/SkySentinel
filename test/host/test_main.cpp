@@ -1557,6 +1557,46 @@ static void testSubGhz() {
   CHECK(!w.poll(ev));                          // once a minute
   w.onLook(0, -100, -98, t);
   CHECK(!w.jammed(0, t));
+  // Band numbers stay fixed (alerts, saved settings); the screen order is by frequency.
+  CHECK(kSubGhzBandList[0].mhz == 315.00f && kSubGhzBandList[5].mhz == 314.35f);
+  bool seen[kSubGhzBands] = {false};
+  for (uint8_t i = 0; i < kSubGhzBands; ++i) {
+    CHECK(kSubGhzBandOrder[i] < kSubGhzBands && !seen[kSubGhzBandOrder[i]]);
+    seen[kSubGhzBandOrder[i]] = true;
+    if (i) CHECK(kSubGhzBandList[kSubGhzBandOrder[i - 1]].mhz < kSubGhzBandList[kSubGhzBandOrder[i]].mhz);
+  }
+  // A Toyota fob at 314.3 MHz is inside the 314.35 look's window (650 kHz wide), not 315's.
+  CHECK(314.30f > kSubGhzBandList[5].mhz - 0.325f && 314.30f < kSubGhzBandList[0].mhz - 0.325f);
+
+  // Bursts in the device list: one row per band (Sub-GHz category).
+  const Sighting sg = subGhzSighting(5, -71);
+  CHECK(sg.kind == KIND_SUBGHZ && radioClass(sg.kind) == 5 && sg.category == CAT_SUBGHZ);
+  CHECK(sg.channel == 5 && sg.rssi_max == -71 && sg.sig_id == SIG_SUBGHZ_BAND + 5);
+  CHECK_EQ(subGhzKhz(sg.addr), 314350u);
+  CHECK_EQ(subGhzKhz(subGhzSighting(3, -80).addr), 433920u);
+  CHECK(subGhzKhz(subGhzSighting(0, -80).addr) != subGhzKhz(sg.addr));
+  const uint8_t notOne[6] = {0x02, 0x11, 0x22, 0x33, 0x44, 0x55};
+  CHECK_EQ(subGhzKhz(notOne), 0u);
+  CHECK(strcmp(sigName(SIG_SUBGHZ_BAND + 5), "Sub-GHz bursts: Toyota / Lexus fobs") == 0);
+  CHECK(strcmp(categoryName(CAT_SUBGHZ), "subghz") == 0 && strcmp(categoryLabel(CAT_SUBGHZ), "Sub-GHz") == 0);
+  CHECK(kAllCategoriesMask & catBit(CAT_SUBGHZ));
+  CHECK_EQ(planForCategories(catBit(CAT_SUBGHZ)).ble_duty_pct, 0);   // needs neither BLE nor Wi-Fi time
+  CHECK_EQ(planForCategories(catBit(CAT_SUBGHZ)).channel_mask, 0ull);
+  {  // over the wire and into the master's table
+    uint8_t buf[64];
+    const size_t n = encodeSightings(&sg, 1, buf, sizeof(buf));
+    Sighting back;
+    size_t cnt = 0;
+    CHECK(n > 0 && decodeSightings(buf, n, &back, 1, &cnt) && cnt == 1);
+    CHECK(back.kind == KIND_SUBGHZ && back.category == CAT_SUBGHZ && memcmp(back.addr, sg.addr, 6) == 0);
+    static Device store[4];
+    DeviceTable t(store, 4);
+    CHECK_EQ(t.ingest(3, sg, 1000), DeviceTable::NEW);
+    t.ingest(3, subGhzSighting(5, -65), 2000);   // another burst on the same band: same row
+    CHECK(t.ingest(3, subGhzSighting(0, -80), 3000) == DeviceTable::NEW);   // 315 MHz: its own row
+    Device* d = t.find(sg.addr, 5);
+    CHECK(d && d->hits == 2 && d->category == CAT_SUBGHZ && d->rssi_max == -65);
+  }
 }
 
 static void testEvilTwin() {

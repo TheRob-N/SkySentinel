@@ -293,6 +293,18 @@ void emitAccessPointGroup(const DeviceTable& table, uint32_t id, uint32_t now_ms
   Out.println("]}");
 }
 
+// The page's letter for a device's radio (radioClass()): Wi-Fi, BLE, Classic, LoRa, Sub-GHz.
+static const char* radioLetter(uint8_t radio) {
+  switch (radio) {
+    case 1: return "w";
+    case 2: return "b";
+    case 3: return "c";
+    case 4: return "l";
+    case 5: return "s";
+    default: return "o";
+  }
+}
+
 void emitFollow(const DeviceTable& table, const FollowAlert& a) {
   table.forEach([&](const Device& d) {
     if (d.id != a.device_id) return;
@@ -312,7 +324,7 @@ void emitFollow(const DeviceTable& table, const FollowAlert& a) {
     if (d.name[0]) { Out.print(",\"name\":"); jsonStr(d.name); }
     Out.printf(",\"places\":%u,\"min\":%lu,\"rssi\":%d,\"k\":\"%s\"}\n", a.places,
                (unsigned long)(a.with_us_ms / 60000), d.rssi_last,
-               d.radio == 1 ? "w" : (d.radio == 2 ? "b" : (d.radio == 3 ? "c" : (d.radio == 4 ? "l" : "o"))));
+               radioLetter(d.radio));
   });
 }
 
@@ -376,7 +388,7 @@ void emitDeviceList(const DeviceTable& table, uint32_t now_ms, size_t max_device
     jsonStr(sigName(d.sig_id));
     Out.printf(",\"f\":%u,\"r\":%d,\"rx\":%d,\"a\":%lu,\"o\":%u,\"k\":\"%s\",\"h\":%lu,\"ch\":%u,\"x\":%u",
                   d.conf, d.rssi_last, d.rssi_max, (unsigned long)((now_ms - d.last_ms) / 1000), d.rotations,
-                  d.radio == 1 ? "w" : (d.radio == 2 ? "b" : (d.radio == 3 ? "c" : (d.radio == 4 ? "l" : "o"))), (unsigned long)d.hits, d.channel, d.flags);
+                  radioLetter(d.radio), (unsigned long)d.hits, d.channel, d.flags);
     if (d.aliases) Out.printf(",\"al\":%u", d.aliases);
     {  // the node that hears it best: [slot, rssi, how many nodes heard it in the last minute]
       int8_t br;

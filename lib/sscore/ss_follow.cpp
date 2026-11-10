@@ -36,7 +36,8 @@ bool FollowMonitor::eligible(const Device& d) const {
   // or linger: at home they'd fire on your own Raspberry Pi or laptop after 20 minutes.
   // (Phones and other everyday devices are low-confidence by nature and still count.)
   const bool weakSurv = (kSurveillanceMask & catBit(d.category)) && d.conf < 40;
-  return !isAp(d) && !d.spoofed && !d.hidden && !d.alias_of && !weakSurv;
+  // Sub-GHz rows are a whole band, not one device: they'd "follow" every drive.
+  return !isAp(d) && !d.spoofed && !d.hidden && !d.alias_of && !weakSurv && d.category != CAT_SUBGHZ;
 }
 
 void FollowMonitor::push(const FollowAlert& a) {

@@ -18,11 +18,14 @@ struct SubGhzBand {
   float mhz;
   const char* what;   // "fobs, tire sensors"
 };
-constexpr uint8_t kSubGhzBands = 5;
+// Band numbers stay fixed (alerts and saved settings use them); new bands go at the end
+// and screens list them in frequency order (kSubGhzBandOrder).
+constexpr uint8_t kSubGhzBands = 6;
 extern const SubGhzBand kSubGhzBandList[kSubGhzBands];
+extern const uint8_t kSubGhzBandOrder[kSubGhzBands];   // band numbers, lowest frequency first
 
 struct SubGhzPolicy {
-  int8_t burst_db = 15;        // a sample this far above the floor is a burst
+  int8_t burst_db = 30;        // a sample this far above the floor is a burst (T-Embed default, Nov 10)
   int8_t jam_db = 20;          // the band's median this far above its floor...
   uint32_t jam_ms = 3000;      // ...for this long is jamming
   uint32_t hold_ms = 60000;    // one jamming alarm per band per minute
@@ -30,9 +33,19 @@ struct SubGhzPolicy {
 
 struct SubGhzBurst { uint8_t band; int8_t peak; uint32_t ms; };
 
+// One row per band in the device list: every burst on that band adds to it. Not a device
+// ID (bursts carry none until they're decoded): addr = 02:53:47 ("SG", locally
+// administered) + the band's frequency in kHz (3 bytes), channel = band number.
+Sighting subGhzSighting(uint8_t band, int8_t peak_dbm);
+// The band's kHz back from such an address, 0 if it isn't one.
+uint32_t subGhzKhz(const uint8_t addr[6]);
+
 class SubGhzWatch {
  public:
   explicit SubGhzWatch(SubGhzPolicy p = SubGhzPolicy()) : pol_(p) {}
+  // Burst sensitivity: dB over the floor that counts as a burst (lower = more bursts).
+  void setBurstDb(int8_t db) { pol_.burst_db = db; }
+  int8_t burstDb() const { return pol_.burst_db; }
   // One look at a band: the samples' median and peak (dBm) over ~100 ms.
   void onLook(uint8_t band, int8_t median, int8_t peak, uint32_t now_ms);
   // A jamming alarm (once per hold-off per band): EV_RF_JAM, channel = band,
@@ -50,8 +63,8 @@ class SubGhzWatch {
  private:
   SubGhzPolicy pol_;
   int32_t floor_[kSubGhzBands] = {0};      // dBm x 16; 0 = not learned yet
-  int8_t last_[kSubGhzBands] = {-127, -127, -127, -127, -127};
-  int8_t peak_[kSubGhzBands] = {-127, -127, -127, -127, -127};
+  int8_t last_[kSubGhzBands] = {-127, -127, -127, -127, -127, -127};
+  int8_t peak_[kSubGhzBands] = {-127, -127, -127, -127, -127, -127};
   uint32_t bursts_[kSubGhzBands] = {0};
   bool in_burst_[kSubGhzBands] = {false};
   uint32_t loud_since_[kSubGhzBands] = {0};

@@ -36,3 +36,4 @@ echo "node drops at master:  $(grep -c '"event":"lost"' "$D/master.log" 2>/dev/n
 echo "devkit lost-master:    $(grep -a -c 'lost master' "$D/devkit.log" 2>/dev/null)"
 echo "cyd memory:            $(grep -a -o '"heap":[0-9]*,"heap_min":[0-9]*,"heap_big":[0-9]*' "$D/cyd.log" 2>/dev/null | tail -1)"
 echo "cyd send failures:     $(grep -a -o '"send_fail":[0-9]*' "$D/cyd.log" 2>/dev/null | tail -1)"
+echo "cyd queue drops:       $(grep -a -o '"drops":[0-9]*' "$D/cyd.log" 2>/dev/null | tail -1)   loop stack left: $(grep -a -o '"loop_stack_min":[0-9]*' "$D/cyd.log" 2>/dev/null | tail -1)"

@@ -1,4 +1,4 @@
-# SkySentinel 2.1
+# SkySentinel 2.1.1
 
 **Know what's watching.** A listen-only detector for surveillance gear and everyday radio
 devices: Flock ALPR cameras, body cams, AirTags and other trackers, camera glasses, drones
@@ -12,7 +12,9 @@ own Wi-Fi) and on an optional touch dashboard.
 **New in 2.1:** MeshCore and a LoRa channel picker on the Heltec, per-node link (LR or
 normal) and an EVERYTHING job for outposts, "which node hears it" in the device list,
 about 6 to 7 times more Bluetooth heard by C5 and Heltec boards, and much better
-recovery from a known ESP-IDF radio bug. See [CHANGELOG.md](CHANGELOG.md).
+recovery from a known ESP-IDF radio bug. **2.1.1** fixes the web installer for ESP32-S3
+boards, puts T-Embed sub-GHz bursts in the device list, and gives the T-Embed power and
+settings menus. See [CHANGELOG.md](CHANGELOG.md).
 
 - **Install from your browser:** https://skysentinel.neyhard.com (no toolchain needed)
 - **How-tos:** https://skysentinel.neyhard.com/docs.html
@@ -606,16 +608,39 @@ DIO1 14, TCXO 1.8 V).
 `pio run -e tembed -t upload` (replaces Bruce or the factory demo). The C5's firmware
 (BLE + 2.4 GHz Wi-Fi, defaults to **node**) plus:
 
-- **Band watch** on the CC1101, receive only: 315, 345, 390, 433.92 and 915 MHz in turn,
-  about 100 ms each (40 signal samples), with the antenna switch set per band. Per band:
+- **Band watch** on the CC1101, receive only: 314.35 (Toyota / Lexus smart keys), 315,
+  345, 390, 433.92 and 915 MHz in turn, about 100 ms each (40 signal samples), with the antenna switch set per band. Per band:
   a noise floor (follows quiet down fast, loud up slowly), **bursts** (a fob press, a
   sensor, a remote: a sample 15 dB over the floor) and **jamming** (the whole band 20 dB
   over its floor for 3 s: `EV_RF_JAM`, alert on the master, `rf_jam` in the log, once a
   minute per band). Runs while the Pentest gear or Vehicles category is on.
 - **Screen and jog wheel:** turn for pages: HOME (master link, scanning, battery,
   sub-GHz state), BANDS (level now, floor, peak, bursts, JAM) and RECENT (latest bursts).
-  Pressing the wheel also flips pages; the back button turns the screen off and on.
-  Pairing and IDENTIFY show full screen. The LED ring's first LED glows red while jammed.
+  Pressing the wheel also flips pages; a press of BACK turns the screen off and on.
+- **POWER menu:** hold BACK 2 s. Turn the wheel to choose, press it to do it, BACK
+  cancels. The same choices as Bruce: **Screen off** (keeps scanning), **Deep sleep**
+  (radios, LEDs and screen off; BACK wakes it), **Power off** (the BQ25896 charger
+  disconnects the battery, a true off; plugging in USB turns it on; on USB power it says
+  so and suggests Deep sleep) and **Restart**. After Deep sleep or Power off the master
+  shows the node as lost until it comes back.
+- **SETTINGS menu:** hold the wheel 1 s. Press the wheel to step a setting to its next
+  value (saved on the board right away), BACK when done: brightness, screen off after
+  (never / 1 / 5 / 15 min; the first touch then only wakes it), start page, turn the
+  screen around (also `display flip`), LED ring alerts on / off and brightness, the
+  color for each alert (jamming, sub-GHz burst, lost master; or Off), what counts as a
+  burst (louder than 10 / 15 / 20 / 25 / 30 dB over the band's quiet level, default 30, and
+  longer than 2.5 / 7.5 / 15 / 20 / 30 ms, default 15; louder and longer = fewer false bursts), which bands to
+  watch, and whether jamming is sent to the master.
+- **On the web console:** every burst goes to the master as a row in LIVE DEVICES, one
+  row per band ("Sub-GHz bursts: Ford fobs, tire sensors", ADDRESS 315 MHz): HITS counts
+  the bursts, SIGNAL is the latest one's, NODE says which T-Embed heard it. They're in
+  their own **Sub-GHz** category (CATEGORIES; on by default) and the radio filter next
+  to the search box shows only them (or only Wi-Fi, Bluetooth LE, Classic BT or LoRa).
+  A row is a band, not a device: the bursts carry no ID until they're decoded. Sub-GHz
+  rows never raise "following" alerts.
+- **LED ring = alert light:** jamming lights it solid (red by default) while it lasts, a
+  sub-GHz burst flashes it (blue), and while it looks for its master it blinks slowly
+  (yellow). Picking a color in SETTINGS shows it on the ring for a moment.
 - **Battery** from its BQ27220 fuel gauge.
 - Next: tire-pressure sensor IDs (following alerts on a car), fob and remote IDs, replay
   and brute-force patterns. Pins: SPI 11 / 9 / 10 shared by screen (CS 41, DC 16, RST 40,

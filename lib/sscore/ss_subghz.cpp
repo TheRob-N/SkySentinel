@@ -3,12 +3,39 @@
 namespace ss {
 
 const SubGhzBand kSubGhzBandList[kSubGhzBands] = {
-    {"315 MHz", 315.00f, "car fobs, tire sensors"},
+    {"315 MHz", 315.00f, "Ford fobs, tire sensors"},   // e.g. Ford N5F-A08TAA
     {"345 MHz", 345.00f, "alarm sensors"},
     {"390 MHz", 390.00f, "garage remotes"},
     {"433.92", 433.92f, "fobs, sensors, remotes"},
     {"915 MHz", 915.00f, "meters, ISM gear"},
+    // Toyota / Lexus smart keys (e.g. HYQ14FBA) send at 314.3 MHz, outside the 315 MHz
+    // look's 650 kHz window (Nov 10: a Ford fob showed, a Toyota fob didn't).
+    {"314.35", 314.35f, "Toyota / Lexus fobs"},
 };
+const uint8_t kSubGhzBandOrder[kSubGhzBands] = {5, 0, 1, 2, 3, 4};
+
+Sighting subGhzSighting(uint8_t band, int8_t peak_dbm) {
+  Sighting s;
+  if (band >= kSubGhzBands) band = 0;
+  const uint32_t khz = (uint32_t)(kSubGhzBandList[band].mhz * 1000.0f + 0.5f);
+  s.addr[0] = 0x02; s.addr[1] = 0x53; s.addr[2] = 0x47;
+  s.addr[3] = (uint8_t)(khz >> 16); s.addr[4] = (uint8_t)(khz >> 8); s.addr[5] = (uint8_t)khz;
+  s.kind = KIND_SUBGHZ;
+  s.channel = band;
+  s.rssi_max = s.rssi_last = peak_dbm;
+  s.hits = 1;
+  s.category = CAT_SUBGHZ;
+  s.sig_id = (uint16_t)(210 + band);   // SIG_SUBGHZ_BAND + band (ss_classify.h)
+  s.conf = 50;
+  s.flags = 0;
+  s.company = 0xFFFF;
+  return s;
+}
+
+uint32_t subGhzKhz(const uint8_t a[6]) {
+  if (a[0] != 0x02 || a[1] != 0x53 || a[2] != 0x47) return 0;
+  return ((uint32_t)a[3] << 16) | ((uint32_t)a[4] << 8) | a[5];
+}
 
 void SubGhzWatch::onLook(uint8_t b, int8_t median, int8_t peak, uint32_t now_ms) {
   if (b >= kSubGhzBands) return;

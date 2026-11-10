@@ -18,6 +18,7 @@ constexpr int CC_CS = 12, CC_GDO0 = 3, CC_GDO2 = 38, CC_SW1 = 47, CC_SW0 = 48;
 constexpr int ENC_A = 4, ENC_B = 5, ENC_KEY = 0, BACK_KEY = 6;
 constexpr int I2C_SDA = 8, I2C_SCL = 18;
 constexpr uint8_t GAUGE_ADDR = 0x55;   // BQ27220 fuel gauge
+constexpr uint8_t CHARGER_ADDR = 0x6B; // BQ25896 charger (power path)
 constexpr int LED_PIN = 14;            // 8 x WS2812 around the jog wheel
 
 // Once, before anything touches the bus: power on, all chip selects high, SPI up.
@@ -31,6 +32,15 @@ struct SpiLock {
 void antennaFor(float mhz);
 // State of charge from the fuel gauge, 255 = no gauge / no battery.
 uint8_t batteryPercent();
+// USB (or any charger) is connected: the BQ25896 sees good input power.
+bool usbPowered();
+// Power off for real, as Bruce does: the BQ25896 disconnects the battery (BATFET off,
+// "ship mode"). Plugging in USB turns the board back on. Returns false if the charger
+// didn't answer; on USB power the board stays on regardless.
+bool batteryOff();
+// Deep sleep, as Bruce does: peripherals' power (PWR_EN) off and held off, wake on BACK.
+// Turn the screen and the CC1101 off first. Does not return.
+[[noreturn]] void deepSleep();
 
 }  // namespace tembed
 }  // namespace ss

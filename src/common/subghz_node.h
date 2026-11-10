@@ -22,6 +22,19 @@ bool pollEvent(Event& out);
 const SubGhzWatch& watch();
 uint8_t currentBand();
 uint32_t sweeps();
+// Settings (T-Embed settings menu): which bands to watch (bit per kSubGhzBandList entry),
+// burst sensitivity, and whether jamming is sent to the master as an alert.
+void setBandMask(uint8_t mask);
+uint8_t bandMask();
+void setBurstDb(int8_t db);
+// A burst needs this many loud samples (of 40, 2.5 ms each) in one look.
+void setBurstSamples(uint8_t n);
+void setJamAlerts(bool on);
+// Bursts heard since the last call, oldest first (for the device list on the master).
+bool nextBurst(SubGhzBurst& out);
+// Before deep sleep / power off: puts the CC1101 to sleep and keeps the SPI bus so the
+// watch task stops using it. Draw on the screen before calling this.
+void shutdown();
 
 }  // namespace subghz
 }  // namespace ss

@@ -1,5 +1,61 @@
 # Changelog
 
+## 2.1.1 (November 10, 2026)
+
+### Important fix
+- **Web installer:** a Fresh install on an ESP32-S3 board (Heltec, T-Embed) wrote the full
+  image at the wrong address after erasing the chip, leaving the board with no bootloader
+  (dark screen, nothing runs; a USB flash recovers it). The installer and the console's
+  FIRMWARE page now recognize full images by their partition table, and refuse to write
+  a file that doesn't match the kind picked.
+
+### Sub-GHz (T-Embed CC1101)
+- **In LIVE DEVICES:** bursts reach the master and show as one row per band ("Sub-GHz
+  bursts: Ford fobs, tire sensors", ADDRESS 315 MHz) in a new **Sub-GHz** category, on by
+  default. A row is a band, not a device: bursts carry no ID until they're decoded.
+- **Radio filter** next to the search box: all, Wi-Fi, Bluetooth LE, Classic BT, LoRa or
+  Sub-GHz.
+- **314.35 MHz band:** Toyota / Lexus smart keys (e.g. HYQ14FBA) send at 314.3 MHz,
+  outside the 315 MHz look. Bands are labeled with what usually uses them (Ford fobs at
+  315 MHz, e.g. N5F-A08TAA).
+- **Far fewer false bursts:** a burst must now be loud *and* last: by default 30 dB over
+  the band's quiet level for at least 15 ms. Single 2.5 ms spikes (the board's own radio,
+  the screen, USB) had shown as bursts on every band every few seconds. Both are settings
+  (10 to 30 dB; 2.5, 7.5, 15, 20 or 30 ms).
+
+### T-Embed CC1101
+- **Screen:** no more flicker (each strip is drawn in memory, then sent whole), the
+  SkySentinel logo in the header as on the CYD and the web console, and one click of the
+  wheel per page (was 2 to 3).
+- **POWER menu** (hold BACK 2 s), as in Bruce: Screen off (keeps scanning), Deep sleep
+  (BACK wakes it), Power off (battery disconnected, USB turns it on), Restart. A press of
+  BACK still turns the screen off and on.
+- **SETTINGS menu** (hold the wheel 1 s): brightness, screen timeout, start page, turn the
+  screen around, LED ring alerts (a color per alert, or off) and their brightness, burst
+  loudness and length, bands to watch, jamming alerts to the master.
+- **LED ring = alert light:** solid while jammed (red), a flash per burst (blue), a slow
+  blink while looking for the master (yellow).
+
+### Reliability
+- **Nodes at the edge of range** (link -78 dBm or worse when the master was lost) no
+  longer restart every minute while looking for it: they keep calling and restart only
+  after 5 minutes. A sudden loss on a strong link still gets the quick restart.
+- **Long Range at the edge:** the stuck-frames restart waits 5 s on a Long Range link (was
+  1.5 s): at -88 to -94 dBm the driver retries each frame many times at the slowest rate,
+  and frames that were only slow restarted a working node every minute or two. Status
+  shows `tx_wait_max`. (Far-side test: the restarts dropped from about 1 every 3 minutes
+  to about 1 every 1.5 hours; the far side still proved past this board's reach.)
+- **Classic boards use less memory:** the sighting queue is 32 on a CYD (was 64) and 48 on
+  a DevKit (was 96), and the loop stack is 6 KB (was 8 KB; the CYD's loop never used more
+  than about 3.2 KB in a day). The CYD's lowest free memory over a day rose from about
+  12.3 KB to 17.5 KB, plus the 2 KB from the stack. Status shows `loop_stack_min`.
+
+### Fixed
+- **MAKER for trackers:** a Chipolo showed as "Apple" (its Find My adverts carry Apple's
+  company number). Trackers the signature identifies now show their own brand (Chipolo,
+  Tile, Samsung), and the details say whose company number the advert carries.
+- CYD: the Vehicles category had no short name or color on the dashboard (blank label).
+
 ## 2.1 (November 2026)
 
 ### New

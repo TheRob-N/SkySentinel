@@ -349,12 +349,19 @@ static constexpr uint32_t kNoMasterRebootMs = 5 * 60 * 1000;  // node: restart a
 // master really is off), it settles back to every 5 minutes.
 static constexpr uint32_t kNoMasterQuickMs = 60 * 1000;
 static constexpr uint8_t kNoMasterQuickTries = 3;
+// A node at the edge of range (weak link when it lost the master) lost it to distance, not
+// to a stuck radio: restarting every minute doesn't help, and keeps it off the air while
+// it reboots. It skips the quick restarts and keeps calling (in both modes if it uses
+// Long Range), restarting only after kNoMasterRebootMs.
+static constexpr int8_t kEdgeRssi = -78;
+static bool edgeLoss = false;
 static constexpr uint32_t kSelfRestartTag = 0x55AA0006;
 static constexpr uint32_t kRadioRestartTag = 0x55AA0009;
 static constexpr uint32_t kStuckTxRestartTag = 0x55AA000A;
 static constexpr uint32_t kRadioDeadMs = 90000;   // master / standalone: no Wi-Fi frame at all this long = radio didn't start
 RTC_NOINIT_ATTR static uint32_t rtcRestartTag;  // survives a software restart, not power loss
 RTC_NOINIT_ATTR static uint32_t rtcNoMasterRuns;  // quick no-master restarts in a row
+static uint32_t txWaitMax = 0;   // longest wait for the driver that did finish (status: tx_wait_max)
 static uint8_t bootWhy = RW_UNKNOWN;
 static uint16_t linkLosses = 0;
 static uint32_t lostSince = 0;
@@ -888,6 +895,7 @@ static void nodeHandlePacket(const RxPacket& p) {
       paired = true;
       rtcNoMasterRuns = 0;
       lostSince = 0;
+      edgeLoss = false;
       char s[18];
       formatMac(coreMac, s);
       Out.printf("[node] paired with master %s as node %u\n", s, w.node_index);
@@ -1528,6 +1536,7 @@ static void emitStatus(uint32_t now) {
     Out.printf(",\"ble_min\":{\"on\":%u,\"adv\":%lu,\"starts\":%lu,\"stops\":%lu,\"talk\":%lu,\"ends\":%lu}", bleMin.on_pct,
                (unsigned long)bleMin.adv, (unsigned long)bleMin.starts, (unsigned long)bleMin.stops,
                (unsigned long)bleMin.talk, (unsigned long)bleMin.ends);
+  Out.printf(",\"tx_wait_max\":%lu", (unsigned long)txWaitMax);
   Out.printf(",\"ble_restarts\":%lu,\"usb_kicks\":%lu,\"usb_resets\":%lu", (unsigned long)bleRestarts,
              (unsigned long)usbKicks, (unsigned long)usbResets);
 #ifdef SS_GPS
@@ -1854,6 +1863,11 @@ static void handleLine(String line, uint32_t now) {
     memReport();
   } else if (line == "bletest") {
     runBleTest();
+#ifdef SS_DISPLAY_TEMBED
+  } else if (line == "display flip") {
+    display::flip();
+    Out.println("[display] turned around (saved)");
+#endif
   } else if (line.startsWith("setup ") && line != "setup done" && line != "setup reset") {
     // First-run setup in one step: "setup <role> [key]" ("-" clears the key,
     // leaving it out keeps the current one). Saves everything, reboots once.
@@ -2227,9 +2241,10 @@ void setup() {
   unpaired = runRole == RUN_NODE && !clusterKey.length();
   corePinned = prefs.isKey("core") && prefs.getBytes("core", pinnedCore, 6) == 6;
   userCats = prefs.isKey("cats") ? prefs.getUShort("cats", kAllCategoriesMask) : kAllCategoriesMask;
-  if (prefs.getUChar("catv", 1) < 2) {   // categories added since this board saved its choice start on
-    userCats |= catBit(CAT_VEHICLE);
-    prefs.putUChar("catv", 2);
+  if (prefs.getUChar("catv", 1) < 3) {   // categories added since this board saved its choice start on
+    if (prefs.getUChar("catv", 1) < 2) userCats |= catBit(CAT_VEHICLE);
+    userCats |= catBit(CAT_SUBGHZ);
+    prefs.putUChar("catv", 3);
     if (prefs.isKey("cats")) prefs.putUShort("cats", userCats);
   }
   assignMode = (AssignMode)(prefs.isKey("mode") ? prefs.getUChar("mode", (uint8_t)ASSIGN_SPLIT) : (uint8_t)ASSIGN_SPLIT);
@@ -2344,7 +2359,7 @@ void setup() {
   gpsBegin();
 #endif
 #ifdef SS_SUBGHZ
-  Out.printf("[subghz] CC1101 band watch %s\n", subghz::begin(&catMask) ? "ready (315 / 345 / 390 / 433.92 / 915 MHz, receive only)" : "FAILED (radio not found)");
+  Out.printf("[subghz] CC1101 band watch %s\n", subghz::begin(&catMask) ? "ready (314.35 / 315 / 345 / 390 / 433.92 / 915 MHz, receive only)" : "FAILED (radio not found)");
 #endif
 #ifdef SS_LORA
   Out.printf("[lora] 915 MHz listener %s\n", lora::begin(&loraSink, &catMask) ? "ready (Meshtastic, MeshCore, LoRaWAN; receive only)" : "FAILED (radio not found)");
@@ -2412,15 +2427,24 @@ static void startPromisc() {
 // buffer, and after a few every send is refused. Restarting ESP-NOW or even the whole
 // Wi-Fi driver doesn't recover it cleanly (tested: the refusals continue, and memory
 // leaks), so restart the board: back in the cluster within a few seconds.
+// On a Long Range link at the edge of range (-88 to -94 dBm, Nov 9) the driver retries a
+// frame many times at the slowest rate, and 1.5 s restarted a working node every minute or
+// two. Long Range gets 5 s, like the classic boards; the normal link keeps 1.5 s.
 static constexpr uint32_t kTxStuckMs = 1500;
+static constexpr uint32_t kTxStuckLrMs = 5000;
 static void checkStuckTx(uint32_t now) {
   static uint32_t since = 0;
-  if (!espLink.inFlight()) { since = 0; return; }
+  if (!espLink.inFlight()) {
+    if (since && now - since > txWaitMax) txWaitMax = now - since;
+    since = 0;
+    return;
+  }
   if (!since) { since = now ? now : 1; return; }
-  if (now - since < kTxStuckMs) return;
-  Out.printf("[link] %lu frames stuck in the Wi-Fi driver for %lu ms (Long Range %s, heap %lu KB), restarting\n",
+  const bool lr = paired && espLink.peerLongRange(coreMac);
+  if (now - since < (lr ? kTxStuckLrMs : kTxStuckMs)) return;
+  Out.printf("[link] %lu frames stuck in the Wi-Fi driver for %lu ms (Long Range %s, link %d dBm, heap %lu KB), restarting\n",
              (unsigned long)espLink.inFlight(), (unsigned long)(now - since),
-             paired && espLink.peerLongRange(coreMac) ? "on" : "off", (unsigned long)(ESP.getFreeHeap() / 1024));
+             lr ? "on" : "off", masterRssi, (unsigned long)(ESP.getFreeHeap() / 1024));
   rtcRestartTag = kStuckTxRestartTag;
   Serial.flush();
   delay(100);
@@ -2578,6 +2602,10 @@ static void loopNode(uint32_t now) {
                espLink.lastSendError() ? esp_err_to_name(espLink.lastSendError()) : "none", (unsigned long)espLink.inFlight());
     paired = false;
     nodeDefaultConfig();
+    edgeLoss = masterRssi > -127 && masterRssi <= kEdgeRssi;
+    if (edgeLoss)
+      Out.printf("[node] weak link (%d dBm): at the edge, waiting %lu s before restarting\n", masterRssi,
+                 (unsigned long)(kNoMasterRebootMs / 1000));
   }
   if (!paired) {
     if (!lostSince) lostSince = now;
@@ -2599,9 +2627,12 @@ static void loopNode(uint32_t now) {
         lastLook = now; rx0 = espLink.rxCount(); wf0 = wifiFrames; na0 = espLink.notDelivered();
       }
     }
-    const uint32_t giveUp = rtcNoMasterRuns < kNoMasterQuickTries ? kNoMasterQuickMs : kNoMasterRebootMs;
+    const bool quick = !edgeLoss && rtcNoMasterRuns < kNoMasterQuickTries;
+    const uint32_t giveUp = quick ? kNoMasterQuickMs : kNoMasterRebootMs;
     if (now - lostSince > giveUp) {
       ++rtcNoMasterRuns;
+      // Still at the edge after the restart: no quick restarts then either.
+      if (edgeLoss && rtcNoMasterRuns < kNoMasterQuickTries) rtcNoMasterRuns = kNoMasterQuickTries;
       Out.printf("[node] no master for %lu s, restarting (try %lu)\n", (unsigned long)(giveUp / 1000), (unsigned long)rtcNoMasterRuns);
       rtcRestartTag = kSelfRestartTag;
       Serial.flush();
@@ -2706,6 +2737,13 @@ void loop() {
   bleMinuteTick(now);
 #ifdef SS_DISPLAY_TEMBED
   display::tick(now);   // jog wheel and buttons: page flips feel instant
+#endif
+#ifdef SS_SUBGHZ
+  {  // sub-GHz bursts go to the device list as one row per band (Sub-GHz category)
+    SubGhzBurst b;
+    while (subghz::nextBurst(b))
+      if (catMask & catBit(CAT_SUBGHZ)) enqueue(subGhzSighting(b.band, b.peak), nullptr, 0);
+  }
 #endif
 #if !defined(SS_HAS_DISPLAY) && defined(RGB_BUILTIN)
   // A board without a screen talks through its RGB LED:

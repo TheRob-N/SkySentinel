@@ -101,14 +101,15 @@ static void buildColors() {
   static const uint8_t c[CAT_COUNT][3] = {
     {128, 128, 128}, {255, 107, 94}, {255, 149, 64}, {242, 169, 59}, {199, 125, 255}, {72, 201, 232},
     {255, 214, 10}, {61, 220, 151}, {138, 164, 186}, {150, 180, 255}, {120, 200, 200}, {120, 140, 160},
-    {120, 140, 160}, {180, 220, 120},
+    {120, 140, 160}, {180, 220, 120}, {255, 170, 90}, {90, 160, 255},
   };
   for (uint8_t i = 0; i < CAT_COUNT; ++i) catColor[i] = rgb(c[i][0], c[i][1], c[i][2]);
 }
 static const char* const kCatShort[CAT_COUNT] = {
   "", "ALPR", "BODY CAM", "TRACKER", "GLASSES", "DRONE", "SKIMMER", "PENTEST",
-  "PHONES", "AUDIO", "WEARABLE", "OTHER BT", "WI-FI", "LORA",
+  "PHONES", "AUDIO", "WEARABLE", "OTHER BT", "WI-FI", "LORA", "VEHICLE", "SUB-GHZ",
 };
+static_assert(sizeof(kCatShort) / sizeof(kCatShort[0]) == CAT_COUNT, "a short name for every category");
 static const uint8_t kTileCats[8] = {CAT_FLOCK, CAT_BODYCAM, CAT_TRACKER, CAT_GLASSES,
                                      CAT_DRONE, CAT_SKIMMER, CAT_PENTEST, CAT_PHONE};
 

@@ -635,11 +635,11 @@ bool CobsDeframer::feed(uint8_t byte) {
 
 static const char* const kCatNames[CAT_COUNT] = {
   "none", "flock", "bodycam", "tracker", "glasses", "drone", "skimmer", "pentest",
-  "phone", "audio", "wearable", "other_ble", "other_wifi", "lora", "vehicle",
+  "phone", "audio", "wearable", "other_ble", "other_wifi", "lora", "vehicle", "subghz",
 };
 static const char* const kCatLabels[CAT_COUNT] = {
   "None", "ALPR", "Body cams", "Trackers", "Rec. glasses", "Drones", "Skimmers", "Pentest gear",
-  "Phones", "Audio", "Wearables", "Other BLE", "Other Wi-Fi", "LoRa / Meshtastic", "Vehicles",
+  "Phones", "Audio", "Wearables", "Other BLE", "Other Wi-Fi", "LoRa / Meshtastic", "Vehicles", "Sub-GHz",
 };
 const char* categoryName(uint8_t cat) { return cat < CAT_COUNT ? kCatNames[cat] : "unknown"; }
 const char* categoryLabel(uint8_t cat) { return cat < CAT_COUNT ? kCatLabels[cat] : "Unknown"; }

@@ -41,7 +41,9 @@ static WifiNeed wifiNeedFor(uint8_t cat) {
 }
 
 // LoRa is handled by a sub-GHz node, so it needs neither BLE nor Wi-Fi time here.
-static bool needsBle(uint8_t cat) { return cat != CAT_OTHER_WIFI && cat != CAT_NONE && cat != CAT_LORA; }
+static bool needsBle(uint8_t cat) {
+  return cat != CAT_OTHER_WIFI && cat != CAT_NONE && cat != CAT_LORA && cat != CAT_SUBGHZ;
+}
 
 ScanPlan planForCategories(uint16_t category_mask) {
   ScanPlan p;

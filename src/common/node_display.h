@@ -49,6 +49,8 @@ uint8_t batteryPercent();
 // Jog wheel and buttons; call every loop. Turning flips pages, the BACK key turns the
 // screen off and on.
 void tick(uint32_t now_ms);
+// Turns the picture around (wheel on the left or the right); saved on the board.
+void flip();
 #endif
 
 }  // namespace display

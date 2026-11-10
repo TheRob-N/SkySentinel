@@ -76,10 +76,18 @@ static constexpr uint32_t kUnconfiguredBeatMs = 1000;  // check in this often un
 static constexpr uint32_t kStatusEveryMs = 1000;
 static constexpr uint8_t kInquiryLen = 10;          // x 1.28 s = 12.8 s per inquiry
 static constexpr uint32_t kInquiryGapMs = 2000;     // breather for Wi-Fi / ESP-NOW between inquiries
+// The loop task's stack: Arduino's default is 8 KB. Measured on the CYD over a day (Nov 9-10,
+// screen, SD and dashboard included): never less than 5,012 bytes left, so it uses about
+// 3.2 KB. 6 KB keeps ~2.8 KB spare and gives 2 KB back to the heap. Status: loop_stack_min.
+SET_LOOP_TASK_STACK_SIZE(6 * 1024);
+
+// Sightings waiting to be batched for the master (about 76 bytes each). The loop drains it
+// every pass, so a short queue is plenty; queue drops ("drops" in status) would say if not.
+// The CYD's screen, SD card and Classic Bluetooth leave little RAM: 32 frees ~2.4 KB.
 #ifdef SS_CYD
-static constexpr size_t kQueueDepth = 64;   // the CYD's screen, SD card and Classic Bluetooth leave little RAM
+static constexpr size_t kQueueDepth = 32;
 #else
-static constexpr size_t kQueueDepth = 96;
+static constexpr size_t kQueueDepth = 48;
 #endif
 // Categories a Classic device can land in; inquiry runs if any is enabled.
 static constexpr uint16_t kClassicCats = (1u << CAT_AUDIO) | (1u << CAT_PHONE) | (1u << CAT_WEARABLE) |
@@ -517,6 +525,8 @@ static void emitStatus(uint32_t now) {
   Out.printf(",\"heap\":%lu,\"heap_min\":%lu,\"heap_big\":%lu,\"rx_drop\":%lu,\"not_acked\":%lu,\"contact_ms\":%ld",
              (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMinFreeHeap(), (unsigned long)ESP.getMaxAllocHeap(),
              (unsigned long)espLink.rxDropped(), (unsigned long)espLink.notDelivered(), paired ? (long)(now - lastCoreContact) : -1L);
+  // The loop task's stack (6 KB, SET_LOOP_TASK_STACK_SIZE above): the least ever left unused, in bytes.
+  Out.printf(",\"loop_stack_min\":%lu", (unsigned long)uxTaskGetStackHighWaterMark(nullptr));
   Out.printf(",\"paired\":%s,\"slot\":%d,\"pinned\":%s,\"scan\":\"%s\",\"cfg\":%u,\"core\":", paired ? "true" : "false",
              paired ? (int)nodeSlot : -1, corePinned ? "true" : "false",
              wantsWifi() ? "wifi + classic" : "classic", cfg.cfg_version);

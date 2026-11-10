@@ -166,6 +166,8 @@ enum SigId : uint16_t {
   // LoRa (sub-GHz node)
   SIG_MESHTASTIC = 200, SIG_LORAWAN_DEVICE, SIG_LORAWAN_JOIN,
   SIG_MESHCORE_CHAT, SIG_MESHCORE_REPEATER, SIG_MESHCORE_ROOM, SIG_MESHCORE_SENSOR, SIG_MESHCORE_NODE,
+  // Sub-GHz bursts, one per band: SIG_SUBGHZ_BAND + band number (kSubGhzBandList order)
+  SIG_SUBGHZ_BAND = 210, SIG_SUBGHZ_BAND_LAST = 215,
   // Vehicles
   SIG_TESLA_BLE = 220, SIG_CAR_WIFI, SIG_CAR_BT_NAME, SIG_OBD_DONGLE, SIG_CAR_STEREO,
   // Wi-Fi clients seen in their traffic, and makers known by their address block

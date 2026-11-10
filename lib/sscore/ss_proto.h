@@ -81,9 +81,11 @@ enum Category : uint8_t {
   CAT_OTHER_WIFI,
   CAT_LORA,        // Meshtastic nodes, LoRaWAN trackers (sub-GHz node)
   CAT_VEHICLE,     // cars: Tesla Bluetooth, car Wi-Fi hotspots, head units, OBD dongles
+  CAT_SUBGHZ,      // sub-GHz bursts per band (T-Embed CC1101): fobs, remotes, sensors. Last free bit.
   CAT_COUNT
 };
 
+static_assert(CAT_COUNT <= 16, "category masks are 16 bits");
 constexpr uint16_t catBit(uint8_t cat) { return (uint16_t)(1u << cat); }
 constexpr uint16_t kSurveillanceMask =
     catBit(CAT_FLOCK) | catBit(CAT_BODYCAM) | catBit(CAT_TRACKER) | catBit(CAT_GLASSES) |
@@ -91,7 +93,8 @@ constexpr uint16_t kSurveillanceMask =
 constexpr uint16_t kConsumerMask =
     catBit(CAT_PHONE) | catBit(CAT_AUDIO) | catBit(CAT_WEARABLE) | catBit(CAT_OTHER_BLE);
 constexpr uint16_t kAllCategoriesMask =
-    kSurveillanceMask | kConsumerMask | catBit(CAT_OTHER_WIFI) | catBit(CAT_LORA) | catBit(CAT_VEHICLE);
+    kSurveillanceMask | kConsumerMask | catBit(CAT_OTHER_WIFI) | catBit(CAT_LORA) | catBit(CAT_VEHICLE) |
+    catBit(CAT_SUBGHZ);
 
 // What kind of transmission a sighting came from.
 enum Kind : uint8_t {
@@ -106,16 +109,19 @@ enum Kind : uint8_t {
   KIND_LORA_MESHTASTIC = 0x30,  // sub-GHz node (Heltec Wireless Tracker): addr = node id, zero padded
   KIND_LORAWAN         = 0x31,  //   addr = DevAddr zero padded, or last 6 bytes of DevEUI (join)
   KIND_LORA_MESHCORE   = 0x32,  //   addr = first 6 bytes of the node's public key
+  KIND_SUBGHZ          = 0x40,  // sub-GHz bursts on one band (T-Embed): addr = 02:53:47 + kHz (subGhzSighting)
 };
 inline bool kindIsWifi(uint8_t k) { return k >= KIND_WIFI_BEACON && k <= KIND_WIFI_OTHER; }
 inline bool kindIsBle(uint8_t k) { return k == KIND_BLE_ADV; }
 inline bool kindIsLora(uint8_t k) { return (k & 0xF0) == 0x30; }
+inline bool kindIsSubGhz(uint8_t k) { return k == KIND_SUBGHZ; }
 // Radio class used to key devices: 1 = Wi-Fi, 2 = BLE, 3 = BT classic, 4 = LoRa.
 inline uint8_t radioClass(uint8_t k) {
   if (kindIsWifi(k)) return 1;
   if (kindIsBle(k)) return 2;
   if (k == KIND_BT_CLASSIC) return 3;
   if (kindIsLora(k)) return 4;
+  if (kindIsSubGhz(k)) return 5;
   return 0;
 }
 

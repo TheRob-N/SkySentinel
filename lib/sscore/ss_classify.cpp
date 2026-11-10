@@ -827,6 +827,13 @@ const char* sigName(uint16_t id) {
     case SIG_MESHCORE_ROOM: return "MeshCore room server";
     case SIG_MESHCORE_SENSOR: return "MeshCore sensor";
     case SIG_MESHCORE_NODE: return "MeshCore node";
+    // kSubGhzBandList order (ss_subghz.cpp)
+    case SIG_SUBGHZ_BAND + 0: return "Sub-GHz bursts: Ford fobs, tire sensors";
+    case SIG_SUBGHZ_BAND + 1: return "Sub-GHz bursts: alarm sensors";
+    case SIG_SUBGHZ_BAND + 2: return "Sub-GHz bursts: garage remotes";
+    case SIG_SUBGHZ_BAND + 3: return "Sub-GHz bursts: fobs, sensors, remotes";
+    case SIG_SUBGHZ_BAND + 4: return "Sub-GHz bursts: meters, ISM gear";
+    case SIG_SUBGHZ_BAND + 5: return "Sub-GHz bursts: Toyota / Lexus fobs";
     case SIG_TESLA_BLE: return "Tesla (phone-key Bluetooth)";
     case SIG_WIFI_CLIENT_PRIVATE: return "Phone, tablet or laptop on Wi-Fi (private address)";
     case SIG_WIFI_CLIENT: return "Wi-Fi device, connected (fixed address)";

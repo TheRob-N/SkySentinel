@@ -126,11 +126,17 @@ function render() {
   $("go").disabled = !b || !b.env || st.busy || !("serial" in navigator);
 }
 
+// A full ("factory") image has the partition table at 0x8000 (magic AA 50) and the
+// bootloader at 0 (ESP32-S3), 0x1000 (ESP32) or 0x2000 (C5); it is written at 0. An app
+// image starts with its own header (E9) and is written at 0x10000. Check the partition
+// table first: an S3's full image also starts with E9 (its bootloader), and writing it at
+// 0x10000 after erasing the chip leaves the board with no bootloader (Nov 10).
 function inspect(bytes) {
+  if (bytes.length > 0x8002 && bytes[0x8000] === 0xAA && bytes[0x8001] === 0x50)
+    for (const off of [0x0, 0x1000, 0x2000])
+      if (bytes[off] === 0xE9 && bytes.subarray(0, off).every((x) => x === 0xFF || x === 0x00))
+        return { kind: "factory", address: 0, chip: CHIPS[bytes[off + 12] | (bytes[off + 13] << 8)] };
   if (bytes[0] === 0xE9) return { kind: "app", address: 0x10000, chip: CHIPS[bytes[12] | (bytes[13] << 8)] };
-  for (const off of [0x1000, 0x2000, 0x0])
-    if (bytes.length > off + 16 && bytes[off] === 0xE9 && bytes.subarray(0, off).every((x) => x === 0xFF || x === 0x00))
-      return { kind: "factory", address: 0, chip: CHIPS[bytes[off + 12] | (bytes[off + 13] << 8)] };
   return null;
 }
 
@@ -160,6 +166,7 @@ $("go").onclick = async () => {
     const data = new Uint8Array(await r.arrayBuffer());
     const info = inspect(data);
     if (!info) throw new Error(`${file} isn't an ESP32 firmware image`);
+    if (info.kind !== st.kind) throw new Error(`${file} doesn't look like ${st.kind === "app" ? "an update" : "a full"} image; nothing was written`);
     const { ESPLoader, Transport } = window.esptool;
     transport = new Transport(port, false);
     const terminal = { clean() {}, writeLine: (t) => log(t), write: (t) => log(t) };

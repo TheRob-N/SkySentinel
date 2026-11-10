@@ -13,7 +13,7 @@ import sys
 import threading
 
 ORDER = ["flock", "bodycam", "tracker", "glasses", "drone", "skimmer", "pentest",
-         "phone", "audio", "wearable", "other_ble", "other_wifi", "lora"]
+         "phone", "audio", "wearable", "other_ble", "other_wifi", "lora", "vehicle", "subghz"]
 
 
 def fmt_status(s):
