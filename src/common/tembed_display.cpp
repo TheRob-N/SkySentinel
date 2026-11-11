@@ -475,22 +475,28 @@ static void header() {
   const Info& i = info_;
   stripBegin(0, 22, PANEL);
   Adafruit_GFX& d = g();
-  if (i.label && i.label[0]) {   // the name given on the master
-    d.setTextSize(2);
-    d.setTextColor(ACCENT, PANEL);
-    d.setCursor(6, 4);
-    d.print(i.label);
-  } else {
-    drawLogo(6, 2, PANEL);
-  }
+  // The logo always stays top left (as on the CYD and the Heltec); the name given on the
+  // master goes on the right, before the battery.
+  drawLogo(6, 2, PANEL);
   char b[24];
   if (i.battery_pct <= 100) snprintf(b, sizeof(b), "%u%%", i.battery_pct);
   else snprintf(b, sizeof(b), "USB");
+  const int bx = W - 6 - (int)strlen(b) * 12;
+  d.setTextSize(2);
   d.setTextColor(i.battery_pct <= 15 ? CRIT : TEXT, PANEL);
-  d.setCursor(W - 6 - (int)strlen(b) * 12, 4);
+  d.setCursor(bx, 4);
   d.print(b);
   // page dots
   for (uint8_t p = 0; p < kPages; ++p) d.fillCircle(W / 2 - 12 + p * 12, 11, 3, p == page_ ? ACCENT : MUTED);
+  if (i.label && i.label[0]) {
+    const int left = W / 2 + 22, room = (bx - 8 - left) / 6;   // characters that fit at size 1
+    char n[32];
+    snprintf(n, sizeof(n), "%.*s", room > 0 ? (room < 31 ? room : 31) : 0, i.label);
+    d.setTextSize(1);
+    d.setTextColor(MUTED, PANEL);
+    d.setCursor(bx - 8 - (int)strlen(n) * 6, 8);
+    d.print(n);
+  }
   stripEnd();
 }
 
@@ -595,18 +601,31 @@ static void drawAll(bool full) {
     return;
   }
   if (i.pair) {
-    char b[48];
+    // Drawn once per change (state or code), not every second: a full-screen redraw flickers.
+    static uint32_t drawnKey = 0;
+    const uint32_t key = ((uint32_t)i.pair << 24) ^ i.pair_code ^ (uint32_t)set_.rot << 28;
+    if (!full && shown_ == 252 && drawnKey == key) return;
+    drawnKey = key;
+    shown_ = 252;
+    // Centered text (the built-in font is 6 x 8 pixels per character at size 1).
+    auto center = [](int y, uint8_t size, uint16_t fg, const char* s) {
+      text((W - (int)strlen(s) * 6 * size) / 2, y, size, fg, s);
+    };
     tft.fillScreen(BG);
+    drawLogo((W - SKYLOGO_SMALL_W) / 2, 8, BG);
     if (i.pair == 2) {
+      char b[16];
       snprintf(b, sizeof(b), "%06lu", (unsigned long)i.pair_code);
-      text(20, 20, 2, TEXT, "Pair with master?");
-      text(40, 60, 5, ACCENT, b);
-      text(20, 130, 1, MUTED, "Check the code matches, then ACCEPT on the master.");
+      center(38, 2, TEXT, "Pair with this master?");
+      center(66, 5, ACCENT, b);
+      center(118, 1, MUTED, "Check it matches the code on the master's page,");
+      center(130, 1, MUTED, "then press ACCEPT there.");
     } else {
-      text(20, 60, 2, WARN, i.pair == 3 ? "Pairing open" : "Waiting to be paired");
-      text(20, 100, 1, MUTED, "Press PAIR A NODE on the master and hold this close.");
+      center(52, 2, WARN, i.pair == 3 ? "Pairing open" : "Waiting to be paired");
+      center(92, 1, MUTED, "On the master's page press PAIR A NODE,");
+      center(104, 1, MUTED, "then hold this board close to the master.");
+      center(140, 1, MUTED, "Hold BACK 2 s for the power menu.");
     }
-    shown_ = 255;
     return;
   }
   if (full || shown_ != page_) { tft.fillScreen(BG); shown_ = page_; }

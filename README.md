@@ -1,4 +1,4 @@
-# SkySentinel 2.1.1
+# SkySentinel 2.1.2
 
 **Know what's watching.** A listen-only detector for surveillance gear and everyday radio
 devices: Flock ALPR cameras, body cams, AirTags and other trackers, camera glasses, drones
@@ -14,7 +14,8 @@ normal) and an EVERYTHING job for outposts, "which node hears it" in the device 
 about 6 to 7 times more Bluetooth heard by C5 and Heltec boards, and much better
 recovery from a known ESP-IDF radio bug. **2.1.1** fixes the web installer for ESP32-S3
 boards, puts T-Embed sub-GHz bursts in the device list, and gives the T-Embed power and
-settings menus. See [CHANGELOG.md](CHANGELOG.md).
+settings menus; **2.1.2** adds the logo to the Heltec and T-Embed screens and an
+ESP32-only port list. See [CHANGELOG.md](CHANGELOG.md).
 
 - **Install from your browser:** https://skysentinel.neyhard.com (no toolchain needed)
 - **How-tos:** https://skysentinel.neyhard.com/docs.html

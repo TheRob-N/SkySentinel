@@ -131,6 +131,9 @@ function render() {
 // image starts with its own header (E9) and is written at 0x10000. Check the partition
 // table first: an S3's full image also starts with E9 (its bootloader), and writing it at
 // 0x10000 after erasing the chip leaves the board with no bootloader (Nov 10).
+// Only ESP32 boards in the browser's port list: Espressif's own USB (C5, S3: "USB JTAG/
+// serial debug unit"), WCH CH340 / CH9102 (CYD), Silicon Labs CP210x (DevKit), FTDI.
+const ESP_PORTS = [{ usbVendorId: 0x303a }, { usbVendorId: 0x1a86 }, { usbVendorId: 0x10c4 }, { usbVendorId: 0x0403 }];
 function inspect(bytes) {
   if (bytes.length > 0x8002 && bytes[0x8000] === 0xAA && bytes[0x8001] === 0x50)
     for (const off of [0x0, 0x1000, 0x2000])
@@ -145,7 +148,7 @@ $("go").onclick = async () => {
   if (!b || st.busy) return;
   if (st.kind === "factory" && !confirm(`Fresh install erases everything on the ${b.name}, including its settings and pairing. Continue?`)) return;
   let port;
-  try { port = await navigator.serial.requestPort(); } catch (_) { return; }
+  try { port = await navigator.serial.requestPort({ filters: ESP_PORTS }); } catch (_) { return; }
   // A plain ESP32 (CYD, DevKit) has no USB of its own: it shows up through a USB-serial
   // chip (CH340 / CP2102). Espressif's own USB id means a C5 / S3 board was picked.
   const vid = port.getInfo?.().usbVendorId;

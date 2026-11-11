@@ -822,6 +822,9 @@
 
 <script>
 "use strict";
+// Only ESP32 boards in the browser's port list: Espressif's own USB (C5, S3: "USB JTAG/
+// serial debug unit"), WCH CH340 / CH9102 (CYD), Silicon Labs CP210x (DevKit), FTDI.
+const ESP_PORTS = [{ usbVendorId: 0x303a }, { usbVendorId: 0x1a86 }, { usbVendorId: 0x10c4 }, { usbVendorId: 0x0403 }];
 // ---------------------------------------------------------------------------
 // Categories: bit (1 << index) in the firmware's category mask (ss_proto.h)
 const CATS = [
@@ -1359,7 +1362,7 @@ class SerialLink {
   get label() { return "USB"; }
   async connect() {
     if (!("serial" in navigator)) throw new Error("This browser has no Web Serial. Use Chrome or Edge (desktop), opened from a local file or localhost.");
-    if (!this.port) this.port = await navigator.serial.requestPort();
+    if (!this.port) this.port = await navigator.serial.requestPort({ filters: ESP_PORTS });
     // Right after a reboot the port can take a moment to accept an open.
     for (let tries = 0; ; tries++) {
       try { await this.port.open({ baudRate: 115200 }); break; }
@@ -2989,7 +2992,7 @@ class A extends Error{constructor(A){super(A),this.name=new.target.name,Object.s
     if (fw.kind === "factory" && !confirm("Fresh install erases this board's settings (role, keys, Wi-Fi, categories). Continue?")) return;
     let port = null;
     if (state.link instanceof SerialLink) { port = state.link.port; await stopLink(); }
-    try { port = port || await navigator.serial.requestPort(); } catch (_) { return; }
+    try { port = port || await navigator.serial.requestPort({ filters: ESP_PORTS }); } catch (_) { return; }
     fw.busy = true;
     $("fwGo").disabled = true;
     $("fwClose").disabled = true;

@@ -224,10 +224,20 @@
     <h3 id="board-v8">Marauder V8</h3>
     <p>Beta: runs as a C5 master today; its screen and SD card are being added.</p>
     <h3 id="board-tembed">LilyGO T-Embed CC1101 (beta)</h3>
-    <p>A sub-GHz node with its own screen. It watches 315, 345, 390, 433.92 and 915 MHz for bursts (key fobs, garage remotes, sensors) and for
-      <b>jamming</b> (a band held loud for seconds, the trick used to keep cars and wireless alarms from hearing their remotes), and raises an alert
-      on the master. Turn the jog wheel for pages: home, the bands (level, noise floor, bursts) and the latest bursts; the back button turns the screen
-      off. Flashing it replaces Bruce. Tire-sensor and fob IDs are next.</p>
+    <p>A sub-GHz node with its own screen. It watches 314.35 (Toyota / Lexus smart keys), 315 (Ford and others), 345, 390, 433.92 and 915 MHz for
+      bursts (key fobs, garage remotes, sensors) and for <b>jamming</b> (a band held loud for seconds, the trick used to keep cars and wireless alarms
+      from hearing their remotes), and raises an alert on the master. Bursts show in the device list as one row per band, in the <b>Sub-GHz</b>
+      category; the radio filter next to the search box shows only them.</p>
+    <ul>
+      <li><b>Pages:</b> turn the jog wheel: home, the bands (level, noise floor, bursts) and the latest bursts. A press of BACK turns the screen off and on.</li>
+      <li><b>SETTINGS</b> (hold the wheel 1 s): brightness, screen timeout, start page, turning the screen around, LED ring alerts (a color per
+        alert, or off), what counts as a burst (how loud and how long; a desk full of electronics wants 30 dB and 15 ms), bands to watch, jamming
+        alerts to the master.</li>
+      <li><b>POWER</b> (hold BACK 2 s): screen off (keeps scanning), deep sleep (BACK wakes it), power off (disconnects the battery; plugging in
+        USB turns it on), restart.</li>
+      <li><b>LED ring:</b> solid while a band is jammed, a flash for each burst, a slow blink while it looks for its master.</li>
+    </ul>
+    <p>Flashing it replaces Bruce. Tire-sensor and fob IDs are next.</p>
 
     <h2 id="log">Log and SD card</h2>
     <p>The master logs every surveillance device it finds, following and lingering alerts, floods and Bluetooth spam, with time and place when a GPS node has a fix,

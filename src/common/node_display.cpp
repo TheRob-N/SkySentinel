@@ -5,6 +5,8 @@
 #include <Adafruit_ST7735.h>
 #include <SPI.h>
 
+#include "cyd_art.h"   // the SkySentinel logo, as on the CYD, the T-Embed and the web console
+
 // Heltec Wireless Tracker V1.1 (from Meshtastic's variant for this board). V1.0 boards
 // use backlight 45 and VTFT_CTRL 46 (active low): build with those -D overrides.
 #ifndef SS_TFT_CS
@@ -57,6 +59,28 @@ static void line(int y, uint16_t color, const char* text) {
   tft.print(text);
 }
 
+// The logo is light text on black in the art: brightness is taken as coverage and blended
+// onto `bg` (as on the CYD and the T-Embed).
+static void drawLogo(const uint16_t* src, int w, int h, int x, int y, uint16_t bg) {
+  const uint8_t br = (uint8_t)(((bg >> 11) & 31) * 255 / 31), bgg = (uint8_t)(((bg >> 5) & 63) * 255 / 63),
+                bb = (uint8_t)((bg & 31) * 255 / 31);
+  uint16_t line[SKYLOGO_SMALL_W];
+  if (w > SKYLOGO_SMALL_W) return;
+  for (int yy = 0; yy < h; ++yy) {
+    for (int xx = 0; xx < w; ++xx) {
+      const uint16_t v = src[yy * w + xx];
+      const uint8_t r = (uint8_t)(((v >> 11) & 31) * 255 / 31), g = (uint8_t)(((v >> 5) & 63) * 255 / 63),
+                    b = (uint8_t)((v & 31) * 255 / 31);
+      const uint8_t a = r > g ? (r > b ? r : b) : (g > b ? g : b);
+      const uint16_t k = 255 - a;
+      const uint8_t R = (uint8_t)(r + br * k / 255), G = (uint8_t)(g + bgg * k / 255), B = (uint8_t)(b + bb * k / 255);
+      line[xx] = (uint16_t)(((R & 0xF8) << 8) | ((G & 0xFC) << 3) | (B >> 3));
+    }
+    tft.drawRGBBitmap(x, y + yy, line, w, 1);
+  }
+}
+static void drawLogoTiny(int x, int y) { drawLogo(SKYLOGO_TINY, SKYLOGO_TINY_W, SKYLOGO_TINY_H, x, y, BG); }
+
 bool begin() {
   pinMode(SS_VEXT_PIN, OUTPUT);
   digitalWrite(SS_VEXT_PIN, HIGH);
@@ -71,10 +95,7 @@ bool begin() {
   tft.fillScreen(BG);
   tft.setTextWrap(false);
   tft.setTextSize(1);
-  tft.setCursor(4, 4);
-  tft.setTextColor(ACCENT);
-  tft.setTextSize(2);
-  tft.print("SKYSENTINEL");
+  drawLogo(SKYLOGO_SMALL, SKYLOGO_SMALL_W, SKYLOGO_SMALL_H, (160 - SKYLOGO_SMALL_W) / 2, 31, BG);   // start screen
   tft.setTextSize(1);
   ok_ = true;
   return true;
@@ -129,10 +150,11 @@ void update(const Info& in) {
       lastPair = in.pair;
       lastCode = in.pair_code;
       tft.fillScreen(BG);
+      drawLogoTiny(4, 3);
       tft.setTextColor(ACCENT);
       tft.setTextSize(1);
-      tft.setCursor(4, 4);
-      tft.print("SKYSENTINEL  PAIRING");
+      tft.setCursor(160 - 4 - 7 * 6, 4);
+      tft.print("PAIRING");
       if (in.pair == 1) {
         tft.setTextColor(WARN);
         tft.setCursor(4, 24);
@@ -169,14 +191,12 @@ void update(const Info& in) {
   if (!drawn_) {
     tft.fillScreen(BG);
     tft.fillRect(0, 0, 160, 16, BG);
-    tft.setCursor(4, 4);
-    tft.setTextColor(ACCENT);
-    tft.print("SKYSENTINEL");
+    drawLogoTiny(4, 3);
     drawn_ = true;
     last_ = Info();
     last_.role = nullptr;  // forces the header to redraw
   }
-  // Header: SKYSENTINEL + this node's name (or role) + battery
+  // Header: the logo + this node's name (or role) + battery
   static char lastLabel[24] = {1};  // copy: the caller reuses one buffer for the name
   const char* label = in.label ? in.label : "";
   if (last_.role != in.role || last_.battery_pct != in.battery_pct || last_.usb != in.usb ||

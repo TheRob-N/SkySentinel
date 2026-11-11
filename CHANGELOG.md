@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.1.2 (November 10, 2026)
+Polish on top of 2.1.1.
+
+- **Website:** the T-Embed CC1101's card and how-to describe the 314.35 MHz band, the
+  settings and power menus, the LED ring and the Sub-GHz category (still beta while it's
+  being tested).
+- **T-Embed header:** the SkySentinel logo stays top left when the node has a name; the
+  name shows on the right, before the battery (it had replaced the logo).
+- **T-Embed pairing screens:** centered, with the logo; the hint no longer runs off the
+  screen; drawn once per change instead of every second (it flickered).
+- **Port list:** the browser's serial port picker (console, FIRMWARE page and web
+  installer) lists only ESP32 boards: Espressif's own USB, CH340 / CH9102, CP210x and FTDI.
+  The `ttyS` entries are gone.
+- **DevKit flashing:** `pio run -e classic -t upload` uses 115200 baud; the CP2102 kept
+  failing at the default speed.
+- **Heltec screen:** the SkySentinel logo (as on the CYD, the T-Embed and the web console)
+  on its start screen and, at half size, in its header and on the pairing screen.
+
 ## 2.1.1 (November 10, 2026)
 
 ### Important fix
