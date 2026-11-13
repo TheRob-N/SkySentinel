@@ -20,6 +20,25 @@ constexpr uint16_t kNodeReportMs = 5000;
 // it keeps 1 s: at 3 s its screen fell back to "Waiting for dashboard data" now and then.
 constexpr uint16_t kDashReportMs = 1000;
 
+// Link loss over recent windows, so the status line (and the logger's master.log) can say
+// how a node is doing lately, not only since the master started. One sample a minute for
+// the 10-minute window, one every 5 minutes for the hour: 24 samples, ~290 bytes a node.
+struct LossWindow {
+  struct Sample { uint32_t ms, frames, lost; };
+  static constexpr uint8_t kMinute = 11, kFive = 13;
+  Sample m[kMinute];
+  Sample h[kFive];
+  uint8_t mn = 0, hn = 0;
+  void reset() { mn = hn = 0; }
+  // Call often; it keeps a sample only when one is due.
+  void sample(uint32_t now_ms, uint32_t frames, uint32_t lost);
+  // Loss over the last `window_ms` (10 min or 1 h), in tenths of a percent. `span_ms` is
+  // the history it actually covers (less than the window for a while after a start).
+  // False until there's a minute of history.
+  bool over(uint32_t now_ms, uint32_t window_ms, uint32_t frames, uint32_t lost, uint16_t& permille,
+            uint32_t& span_ms) const;
+};
+
 struct NodeInfo {
   bool used = false;
   bool online = false;
@@ -44,6 +63,7 @@ struct NodeInfo {
   int8_t link_mode = -1;           // link to the master: -1 follow the master's LR setting, 0 normal,
                                    //   1 Long Range 250 kbit/s, 2 Long Range 500 kbit/s
   char label[kMaxLabel + 1] = {0};
+  LossWindow loss;           // recent link loss (master side, not saved)
 };
 
 // How work is spread across nodes.
@@ -63,6 +83,8 @@ class NodeRegistry {
   void noteSeq(int slot, uint16_t seq);
   // Marks nodes silent for longer than timeout as offline. True if any changed.
   bool expire(uint32_t now_ms, uint32_t timeout_ms);
+  // Keeps each node's recent-loss samples (call every loop; cheap).
+  void sampleLoss(uint32_t now_ms);
 
   // Drops a node from the list (it can join again by saying hello).
   void forget(int slot);

@@ -22,7 +22,9 @@
 #include "ss_pair.h"
 #include "ss_touch.h"
 #include "ss_proto.h"
+#include "ss_version.h"
 #include "ss_fileserve.h"
+#include "ss_linkchan.h"
 
 using namespace ss;
 
@@ -192,10 +194,26 @@ static void testCrcAndFrames() {
   hb.gps = 4; hb.gps_sats = 11;
   hb.reset = RW_CRASH; hb.heap_kb = 143; hb.heap_min_kb = 61; hb.losses = 3;
   hb.has_pos = true; hb.lat_e7 = 417443636; hb.lon_e7 = -773006866; hb.utc = 1793376000; hb.sd = SD_LOGGING;
+  hb.tx_wait_ms = 1730; hb.stuck_ms = 5012; hb.wants = HBW_ALERTS;
+  hb.release = ssReleaseCode("2.1.3"); hb.build = 2611110843u;
   pl = encodeHeartbeat(hb, payload, sizeof(payload));
-  CHECK_EQ(pl, 42u);
+  CHECK_EQ(pl, 53u);
   Heartbeat hb2;
   CHECK(decodeHeartbeat(payload, pl, hb2));
+  CHECK(hb2.tx_wait_ms == 1730 && hb2.stuck_ms == 5012 && hb2.wants == HBW_ALERTS);
+  CHECK(hb2.release == ((2 << 10) | (1 << 5) | 3) && hb2.build == 2611110843u);
+  CHECK_EQ(ssReleaseCode("2.10.0"), (2 << 10) | (10 << 5));
+  CHECK_EQ(ssReleaseCode("3.0"), 3 << 10);
+  {  // a node from this morning stops after `wants`: no firmware fields
+    Heartbeat mid;
+    CHECK(decodeHeartbeat(payload, 47, mid));
+    CHECK(mid.wants == HBW_ALERTS && mid.release == 0 && mid.build == 0);
+  }
+  {  // a 2.1.2 node stops after the link byte: the driver fields and wants read as 0
+    Heartbeat old;
+    CHECK(decodeHeartbeat(payload, 42, old));
+    CHECK(old.sd == SD_LOGGING && old.tx_wait_ms == 0 && old.stuck_ms == 0 && old.wants == 0);
+  }
   CHECK(hb2.has_pos && hb2.lat_e7 == 417443636 && hb2.lon_e7 == -773006866 && hb2.utc == 1793376000u);
   CHECK(hb2.sd == SD_LOGGING && strcmp(sdStateName(hb2.sd), "logging") == 0);
   {
@@ -659,6 +677,26 @@ static void testWifi() {
   CHECK_EQ(ff.fp, 0u);
   m = classifyWifi(ff);
   CHECK(m.category == CAT_FLOCK && m.strong);
+  // Heard while tuned to 9 (a strong router leaks next door): filed under the channel its beacon states
+  CHECK_EQ(makeWifiSighting(ff, m, 9, -50).channel, 6);
+  {
+    WifiFrame nods = ff;
+    nods.ds_channel = 0;
+    CHECK_EQ(makeWifiSighting(nods, m, 9, -50).channel, 9);   // no DS element: the tuned channel
+  }
+  {  // the table keeps a router on its beacon channel when its other frames turn up next door
+    static Device st[4];
+    DeviceTable t(st, 4);
+    Sighting b = makeWifiSighting(ff, m, 9, -50);
+    Device* d = nullptr;
+    t.ingest(0, b, 1000, &d);
+    CHECK(d && d->channel == 6);
+    Sighting data = b;
+    data.kind = KIND_WIFI_DATA;
+    data.channel = 8;
+    t.ingest(1, data, 2000);
+    CHECK_EQ(d->channel, 6);
+  }
 
   // Real-world form (flock-you WiGLE export): mixed case, name ends in the BSSID
   Frame flock2(8, kBcast, {0x70, 0xC9, 0x4E, 0x7F, 0x68, 0xFF});
@@ -2615,6 +2653,183 @@ static void testFileServe() {
   CHECK(encodeFileChunk(full, fb, sizeof(fb)) > 0);
 }
 
+static void testLossWindow() {
+  puts("recent link loss windows");
+  LossWindow w;
+  uint16_t pm = 0; uint32_t span = 0;
+  uint32_t f = 1091, l = 633;            // a bad start (the CYD after a flash)...
+  w.sample(0, f, l);
+  CHECK(!w.over(30000, 600000, f, l, pm, span));   // under a minute: nothing yet
+  for (uint32_t t = 1000; t <= 900000; t += 1000) { f += 3; w.sample(t, f, l); }   // ...then 15 clean minutes
+  CHECK(w.over(900000, 600000, f, l, pm, span));
+  CHECK_EQ(pm, 0);
+  CHECK(span >= 600000 && span < 660000);
+  CHECK(w.over(900000, 3600000, f, l, pm, span));   // hour: covers all 15 min, includes nothing lost after start
+  CHECK_EQ(span, 900000u);
+  CHECK_EQ(pm, 0);
+  l += 30; f += 270;                     // a bad 30 s: 30 of 300 lost
+  CHECK(w.over(930000, 600000, f, l, pm, span));
+  CHECK(pm > 10 && pm < 20);             // ~30 / (1800 + 300)
+  // Hour window after 2 h: only the last hour counts
+  LossWindow h; uint32_t hf = 0, hl = 0;
+  for (uint32_t t = 0; t <= 7200000; t += 1000) {
+    hf += 3; if (t < 3000000) hl += 1;   // lossy for the first 50 min, clean after
+    h.sample(t, hf, hl);
+  }
+  CHECK(h.over(7200000, 3600000, hf, hl, pm, span));
+  CHECK_EQ(pm, 0);
+  CHECK(span >= 3600000 && span < 3900000);
+  CHECK(h.mn == LossWindow::kMinute && h.hn == LossWindow::kFive);
+  // Counts going backwards (node forgotten, joined again) start the windows over
+  h.sample(7201000, 5, 0);
+  CHECK_EQ(h.mn, 1);
+  CHECK(!h.over(7230000, 600000, 50, 0, pm, span));
+}
+
+static void testDeviceIndex() {
+  puts("device table index under a flood");
+  static Device st[256];
+  DeviceTable t(st, 256);
+  uint32_t seed = 12345;
+  auto rnd = [&]() { seed = seed * 1664525u + 1013904223u; return seed >> 8; };
+  auto brute = [&](const uint8_t a[6], uint8_t radio) -> Device* {
+    for (auto& d : st) if (d.used && d.radio == radio && memcmp(d.addr, a, 6) == 0) return &d;
+    return nullptr;
+  };
+  uint8_t keep[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
+  bool ok = true;
+  for (uint32_t i = 0; i < 6000; ++i) {
+    Sighting x;
+    x.kind = (i & 1) ? KIND_WIFI_PROBE_REQ : KIND_BLE_ADV;
+    x.category = CAT_OTHER_WIFI;
+    x.rssi_max = x.rssi_last = -60;
+    x.hits = 1;
+    for (int k = 0; k < 6; ++k) x.addr[k] = (uint8_t)rnd();
+    x.addr[0] = (uint8_t)((x.addr[0] & 0xFC) | 0x02);   // random (spam-like) address
+    if (i % 50 == 0) memcpy(x.addr, keep, 6);            // one real device seen now and then
+    t.ingest(0, x, 1000 + i, nullptr);
+    if (i % 97 == 0) {   // every used entry must be found through the index, and only it
+      for (auto& d : st) if (d.used && t.find(d.addr, d.radio) != &d) ok = false;
+      uint8_t miss[6] = {0xFE, 0xED, 0, 0, 0, (uint8_t)i};
+      if (t.find(miss, 1) != brute(miss, 1)) ok = false;
+    }
+  }
+  CHECK(ok);
+  CHECK(t.used() >= 256u - 256u / 64 && t.used() <= 256u);   // full (a batch of freed slots may wait on hand)
+  {
+    size_t real = 0;
+    for (auto& d : st) if (d.used) ++real;
+    CHECK_EQ(t.used(), real);   // the kept count matches the table
+  }
+  CHECK(t.find(keep, radioClass(KIND_WIFI_PROBE_REQ)) != nullptr || t.find(keep, radioClass(KIND_BLE_ADV)) != nullptr);
+}
+
+static void testDeviceViewOrder() {
+  puts("dashboard device view: one-pass ranking matches a full sort");
+  static Device st[512];
+  DeviceTable t(st, 512);
+  uint32_t seed = 777;
+  auto rnd = [&]() { seed = seed * 1664525u + 1013904223u; return seed >> 8; };
+  const uint32_t now = 100000;
+  for (int i = 0; i < 400; ++i) {
+    Sighting x;
+    x.kind = KIND_BLE_ADV;
+    x.category = (i % 3) ? CAT_OTHER_BLE : CAT_PHONE;
+    x.conf = (uint8_t)(rnd() % 4 * 25);
+    x.rssi_max = x.rssi_last = -70;
+    x.hits = 1;
+    for (int k = 0; k < 6; ++k) x.addr[k] = (uint8_t)rnd();
+    t.ingest(0, x, now - (rnd() % 50000), nullptr);
+  }
+  const uint16_t cats = 0xFFFF;
+  // Brute force: every listed device, sorted the way the view promises
+  std::vector<const Device*> all;
+  t.forEach([&](const Device& d) { if (!d.hidden && !d.alias_of && !d.spoofed && (int32_t)(now - d.last_ms) <= 60000) all.push_back(&d); });
+  auto sc = [&](const Device* d) { const uint32_t age = now - d->last_ms; return ((uint32_t)d->conf << 16) | (age > 0xFFFF ? 0 : 0xFFFF - age); };
+  std::sort(all.begin(), all.end(), [&](const Device* a, const Device* b) { return sc(a) != sc(b) ? sc(a) > sc(b) : a->id < b->id; });
+  bool ok = true;
+  for (uint16_t off : {0, 6, 120, 246}) {
+    DashDevices v;
+    buildDeviceView(t, now, cats, off, v);
+    if (v.total != all.size()) ok = false;
+    for (uint8_t r = 0; r < v.n; ++r)
+      if (off + r < all.size() && v.rows[r].id != all[off + r]->id) ok = false;
+  }
+  CHECK(ok);
+  CHECK(all.size() > 100);
+}
+
+static void testLinkChannel() {
+  puts("link channel survey");
+  auto ap = [](uint8_t ch, int8_t rssi, uint8_t util = 255) { ChanHeard h; h.channel = ch; h.rssi = rssi; h.ap = true; h.util = util; return h; };
+  // Overlap hurts more than sharing: a -50 router on 7 costs channel 6 more than one on 6
+  CHECK(linkChannelCost(6, ap(7, -50)) > linkChannelCost(6, ap(6, -50, 25)));
+  CHECK_EQ(linkChannelCost(1, ap(7, -50)), 0.0f);    // 6 apart: nothing
+  CHECK_EQ(linkChannelCost(11, ap(6, -50)), 0.0f);   // 5 apart: nothing
+  CHECK(linkChannelCost(6, ap(6, -50, 200)) > linkChannelCost(6, ap(6, -50, 10)));   // a busy router costs more
+  // Rob's farm: EAPs on 1 and 11, a Verizon hotspot on 7 at -50, EAPs weakly on 6
+  LinkSurvey s;
+  s.add(ap(1, -60, 20)); s.add(ap(1, -65, 20)); s.add(ap(11, -61, 20)); s.add(ap(11, -63, 20)); s.add(ap(11, -60, 20));
+  s.add(ap(7, -50)); s.add(ap(6, -85)); s.add(ap(6, -87));
+  CHECK(s.best() != 6);
+  CHECK_EQ(linkChannelPick(6, s, 0), s.best());
+  CHECK_EQ(linkChannelPick(s.best(), s, 0), 0);          // already there: stay
+  // Hysteresis: a slightly better channel isn't worth a move ...
+  LinkSurvey t;
+  t.add(ap(6, -60, 30)); t.add(ap(1, -62, 30));
+  CHECK_EQ(linkChannelPick(6, t, 0), 0);
+  // ... nor is anything when nothing has been heard yet
+  CHECK_EQ(linkChannelPick(6, LinkSurvey(), 900), 0);
+  // a lossy link makes the current channel count 1.5x
+  LinkSurvey u;
+  u.add(ap(7, -65)); u.add(ap(1, -60, 10));
+  const uint8_t calm = linkChannelPick(6, u, 0), lossy = linkChannelPick(6, u, 60);
+  CHECK(calm == 0 && lossy != 0 && lossy == u.best());
+  CHECK_EQ(linkChannelPick(3, s, 0), kLinkChannelDefault);   // off the list: back to 6
+  {  // LinkChooser: averaged, needs a streak, remembers measured loss
+    auto surv = [&](float c1, float c6, float c11) { LinkSurvey x; x.cost[0] = c1; x.cost[1] = c6; x.cost[2] = c11; x.heard = 30; return x; };
+    LinkChooser lc;
+    for (int i = 0; i < 60; ++i) lc.survey(surv(100, 110, 40));   // an hour of 11 looking clearest
+    CHECK_EQ(lc.decide(6, 20), 0);    // 1 of 3
+    CHECK_EQ(lc.streak(), 1);
+    CHECK_EQ(lc.decide(6, 20), 0);    // 2 of 3
+    CHECK_EQ(lc.decide(6, 20), 11);   // 3 of 3: move
+    // One noisy minute doesn't swing an hour's average
+    LinkChooser q;
+    for (int i = 0; i < 60; ++i) q.survey(surv(100, 60, 80));
+    q.survey(surv(100, 60, 5));
+    CHECK(q.avgCost()[2] > 70);
+    for (int i = 0; i < 3; ++i) CHECK_EQ(q.decide(6, 10), 0);   // 6 is still the pick: stay
+    // A streak broken by a "stay" starts over
+    LinkChooser r;
+    for (int i = 0; i < 60; ++i) r.survey(surv(100, 110, 40));
+    CHECK_EQ(r.decide(6, 20), 0);
+    for (int i = 0; i < 120; ++i) r.survey(surv(100, 50, 60));   // 6 fine again for two hours
+    CHECK_EQ(r.decide(6, 20), 0);
+    CHECK_EQ(r.streak(), 0);
+    // Remembered loss: the link did worse on 11 (4%) than it does on 6 now (1%): don't go back
+    LinkChooser m;
+    for (int i = 0; i < 60; ++i) m.survey(surv(100, 110, 40));
+    m.noteLoss(11, 40);
+    CHECK_EQ(m.measuredLoss(11), 40);
+    CHECK_EQ(m.measuredLoss(6), -1);
+    CHECK_EQ(m.decide(6, 10, true), 0);
+    CHECK_EQ(m.vetoed(), 11);
+    CHECK_EQ(m.decide(6, 50, true), 11);   // ...unless 6 is doing worse still
+    // SURVEY NOW skips the streak
+    LinkChooser f;
+    for (int i = 0; i < 60; ++i) f.survey(surv(100, 110, 40));
+    CHECK_EQ(f.decide(6, 0, true), 11);
+    CHECK_EQ(LinkChooser().decide(6, 0, true), 0);   // nothing surveyed yet
+  }
+  // Searching for a lost master: the last known channel first, then the others
+  CHECK(linkSearchChannel(1, 0) == 1 && linkSearchChannel(1, 1) == 6 && linkSearchChannel(1, 2) == 11 && linkSearchChannel(1, 3) == 1);
+  CHECK(linkSearchChannel(6, 0) == 6 && linkSearchChannel(6, 1) == 1 && linkSearchChannel(6, 2) == 11);
+  CHECK_EQ(linkSearchChannel(9, 0), 6);
+}
+
+extern const uint32_t ssBuildStamp = 0;
+
 int main(int argc, char** argv) {
   if (argc > 1 && strcmp(argv[1], "--golden") == 0) { emitGolden(); return 0; }
   testCrcAndFrames();
@@ -2634,6 +2849,10 @@ int main(int argc, char** argv) {
   testSubGhz();
   testGps();
   testFileServe();
+  testLossWindow();
+  testLinkChannel();
+  testDeviceIndex();
+  testDeviceViewOrder();
   testDash();
   testTouch();
   testDashViews();

@@ -26,12 +26,18 @@ void dashLabel(const Device& d, char* out, size_t cap) {
 
 void buildDash(const DeviceTable& table, uint32_t now_ms, uint16_t cats, Dash& out) {
   out.cats = cats;
-  for (uint8_t c = 1; c < CAT_COUNT; ++c) {
-    const size_t n = table.countNow(c, now_ms);
-    out.now[c] = (uint8_t)(n > 255 ? 255 : n);
+  // One pass for every category's "now" count (was a pass per category plus one for the
+  // total: ~17 walks of a 2048-entry table in slow PSRAM, for every dashboard, every second).
+  {
+    size_t per[CAT_COUNT] = {0}, all = 0;
+    table.forEach([&](const Device& d) {
+      if (d.spoofed || d.alias_of || d.hidden || now_ms - d.last_ms > 30000) return;
+      ++all;
+      if (d.category < CAT_COUNT) ++per[d.category];
+    });
+    for (uint8_t c = 1; c < CAT_COUNT; ++c) out.now[c] = (uint8_t)(per[c] > 255 ? 255 : per[c]);
+    out.devices_now = (uint16_t)(all > 0xFFFF ? 0xFFFF : all);
   }
-  const size_t all = table.countNowAll(now_ms);
-  out.devices_now = (uint16_t)(all > 0xFFFF ? 0xFFFF : all);
 
   // Keep the best kDashThreats by score without allocating.
   struct Pick { const Device* d; uint32_t score; };
@@ -83,21 +89,29 @@ void buildDeviceView(const DeviceTable& table, uint32_t now_ms, uint16_t cats, u
     const uint32_t age = now_ms - d.last_ms;
     return ((uint32_t)d.conf << 16) | (age > 0xFFFF ? 0 : 0xFFFF - age);
   };
-  // The row at position p is the device with exactly p devices ranked above it (ties
-  // broken by id). Small tables (a few hundred to 2048 entries) and 6 rows a second:
-  // counting passes are cheap and need no memory.
-  uint32_t total = 0;
-  table.forEach([&](const Device& d) { if (listed(d)) ++total; });
-  out.total = (uint16_t)(total > 0xFFFF ? 0xFFFF : total);
-  auto above = [&](const Device& a, const Device& b) {  // a ranks above b
+  auto above = [&](const Device& a, const Device& b) {  // a ranks above b (ties by id)
     const uint32_t sa = score(a), sb = score(b);
     return sa != sb ? sa > sb : a.id < b.id;
   };
+  // Keep the best (offset + 6) listed devices in one pass, then they're in order. This
+  // used to rank every listed device by walking the whole table again (listed x 2048
+  // reads of slow PSRAM, ~70 ms, once a second for a CYD): the master fell behind its
+  // nodes. Keeps up to kViewKeep; a page past that shows empty.
+  static constexpr uint16_t kViewKeep = 256;
+  static const Device* keep[kViewKeep];
+  const uint32_t want = (uint32_t)offset + kDashRows > kViewKeep ? kViewKeep : (uint32_t)offset + kDashRows;
+  uint32_t total = 0, n = 0;
   table.forEach([&](const Device& d) {
     if (!listed(d)) return;
-    uint32_t rank = 0;
-    table.forEach([&](const Device& o) { if (&o != &d && listed(o) && above(o, d)) ++rank; });
-    if (rank < offset || rank >= (uint32_t)offset + kDashRows) return;
+    ++total;
+    if (n == want && !above(d, *keep[n - 1])) return;   // not in the top `want`
+    uint32_t at = n < want ? n++ : want - 1;            // insert in order (drops the last when full)
+    while (at > 0 && above(d, *keep[at - 1])) { keep[at] = keep[at - 1]; --at; }
+    keep[at] = &d;
+  });
+  out.total = (uint16_t)(total > 0xFFFF ? 0xFFFF : total);
+  for (uint32_t rank = offset; rank < n; ++rank) {
+    const Device& d = *keep[rank];
     DashDevRow& r = out.rows[rank - offset];
     r.id = d.id;
     r.category = d.category;
@@ -109,7 +123,7 @@ void buildDeviceView(const DeviceTable& table, uint32_t now_ms, uint16_t cats, u
     r.age_s = (uint8_t)(age > 255 ? 255 : age);
     r.radio = radioOf(d);
     dashLabel(d, r.text, sizeof(r.text));
-  });
+  }
   const uint32_t left = total > offset ? total - offset : 0;
   out.n = (uint8_t)(left < kDashRows ? left : kDashRows);
 }

@@ -167,6 +167,8 @@ size_t encodeHeartbeat(const Heartbeat& m, uint8_t* out, size_t cap) {
   w.u8(m.has_pos ? 1 : 0); w.u32((uint32_t)m.lat_e7); w.u32((uint32_t)m.lon_e7); w.u32(m.utc);
   w.u8(m.sd);
   w.u8(m.link);
+  w.u16(m.tx_wait_ms); w.u16(m.stuck_ms); w.u8(m.wants);
+  w.u16(m.release); w.u32(m.build);
   return w.ok() ? w.size() : 0;
 }
 bool decodeHeartbeat(const uint8_t* p, size_t n, Heartbeat& m) {
@@ -185,6 +187,8 @@ bool decodeHeartbeat(const uint8_t* p, size_t n, Heartbeat& m) {
   }
   if (r.remaining() >= 1) m.sd = r.u8();
   if (r.remaining() >= 1) m.link = r.u8();
+  if (r.remaining() >= 5) { m.tx_wait_ms = r.u16(); m.stuck_ms = r.u16(); m.wants = r.u8(); }
+  if (r.remaining() >= 6) { m.release = r.u16(); m.build = r.u32(); }
   return r.ok();
 }
 

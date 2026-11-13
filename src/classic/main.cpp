@@ -38,6 +38,8 @@
 #include "ss_classify.h"
 #include "ss_nodes.h"
 #include "ss_proto.h"
+#include "ss_version.h"
+#include "ss_linkchan.h"
 #ifdef SS_CYD
 #include "cyd_gps.h"
 #include "cyd_sd.h"
@@ -72,6 +74,15 @@ static constexpr uint32_t kDashBeatMs = 1000;
 #else
 static constexpr uint32_t kListenWindowMs = 60;
 #endif
+// After each heartbeat, stay on the master's channel until its CONFIG answer lands (up
+// to this long), instead of a fixed 60 ms: a DevKit missed every answer for 45 s about
+// once an hour and re-paired, while the master heard it fine the whole time.
+static constexpr uint32_t kBeatListenMs = 400;
+// Haven't heard the master this long: stop hopping and inquiring, and just listen
+static constexpr uint32_t kStaleContactMs = 15000;
+// A full report buffer sends at once, but no more often than this: under a flood (spam
+// tool nearby) every node otherwise sent non-stop. What doesn't fit is dropped and counted.
+static constexpr uint32_t kMinReportGapMs = 100;
 static constexpr uint32_t kUnconfiguredBeatMs = 1000;  // check in this often until the master's CONFIG lands
 static constexpr uint32_t kStatusEveryMs = 1000;
 static constexpr uint8_t kInquiryLen = 10;          // x 1.28 s = 12.8 s per inquiry
@@ -126,7 +137,16 @@ static uint8_t nodeSlot = 0xFF;
 static Config cfg;
 static volatile uint16_t catMask = 0;
 static volatile int8_t rssiFloor = -95;
-static volatile uint8_t curChannel = kHomeChannel;
+// The cluster's link channel (1, 6 or 11, saved as "lch"): the master may move it, and
+// we follow; a node that lost the master looks for it on each in turn (ss_linkchan.h).
+static uint8_t homeChannel = kLinkChannelDefault;
+static uint8_t savedChannel = kLinkChannelDefault;
+static uint8_t moveTo = 0;
+static uint32_t moveAt = 0;
+static uint32_t searchStep = 0, searchAt = 0;
+static constexpr uint32_t kSearchDwellMs = 3000;
+static constexpr uint32_t kNodeMoveDelayMs = 4000;
+static volatile uint8_t curChannel = kLinkChannelDefault;
 static uint8_t hopCursor = kChannelCount - 1;
 static volatile uint32_t wifiFrames = 0, classicFound = 0, queueDrops = 0;
 static uint32_t lastHop = 0, lastReport = 0, lastHeartbeat = 0, lastHello = 0, lastStatus = 0;
@@ -134,6 +154,7 @@ static uint32_t lastHop = 0, lastReport = 0, lastHeartbeat = 0, lastHello = 0, l
 static bool btReady = false;
 static volatile bool inquiring = false;
 static uint32_t nextInquiry = 0;
+static uint32_t awaitCfgUntil = 0;   // heartbeat sent: listening for the CONFIG answer until then
 static uint32_t inquiries = 0;
 
 static uint32_t identifyUntil = 0;    // master's "which one is this?"
@@ -276,6 +297,7 @@ static void pollInquiry(uint32_t now) {
   if (!(catMask & kClassicCats)) return;
   if ((int32_t)(now - nextInquiry) < 0) return;
   if ((int32_t)(fileBusyUntil - now) > 0) return;   // a download has the radio
+  if (paired && now - lastCoreContact > kStaleContactMs) return;   // listen for the master first
   if (esp_bt_gap_start_discovery(ESP_BT_INQ_MODE_GENERAL_INQUIRY, kInquiryLen, 0) == ESP_OK) {
     inquiring = true;
     ++inquiries;
@@ -307,9 +329,9 @@ static void defaultConfig() {
 }
 
 static void goHome() {
-  if (curChannel != kHomeChannel) {
-    setRadioChannel(kHomeChannel);
-    curChannel = kHomeChannel;
+  if (curChannel != homeChannel) {
+    setRadioChannel(homeChannel);
+    curChannel = homeChannel;
   }
 }
 
@@ -320,6 +342,19 @@ static void rememberLr(bool lr, bool fast) {
   if (lr != lrRemembered) prefs.putBool("lrlink", lr);
   if (lr && fast != prefs.getBool("lrfast", true)) prefs.putBool("lrfast", fast);
   lrRemembered = lr;
+}
+
+static void saveLinkChannel(uint8_t ch) {
+  if (ch == savedChannel || !linkChannelValid(ch)) return;
+  savedChannel = ch;
+  prefs.putUChar("lch", ch);
+}
+static void searchLinkChannel(uint32_t now) {
+  if (searchAt && now - searchAt < kSearchDwellMs) return;
+  searchAt = now ? now : 1;
+  homeChannel = linkSearchChannel(savedChannel, searchStep++);
+  setRadioChannel(homeChannel);
+  curChannel = homeChannel;
 }
 
 static void sendHello() {
@@ -344,6 +379,34 @@ static void sendHello() {
   espLink.send(nullptr, MSG_HELLO, myId, buf, encodeHello(h, buf, sizeof(buf)));
 }
 
+// The longest a send took to be confirmed (heartbeat: tx_wait_ms), and how long the frames
+// were stuck before the last stuck-frames restart (kept across it: heartbeat stuck_ms).
+static uint32_t txWaitMax = 0;
+RTC_NOINIT_ATTR static uint32_t rtcStuckMs, rtcStuckMagic;
+static uint16_t lastStuckMs = 0;
+// Heartbeat health (the C5/S3 firmware always sent these; this one didn't, so the page
+// showed "not sent" for the CYD and DevKit): why it last started, and times it lost the master.
+static uint8_t bootWhy = RW_UNKNOWN;
+static uint16_t linkLosses = 0;
+static uint8_t classicResetWhy() {
+  const esp_reset_reason_t r = esp_reset_reason();
+  if (r == ESP_RST_SW && rtcStuckMagic == 0x5354554B) return RW_STUCK_TX;
+  switch (r) {
+    case ESP_RST_POWERON: case ESP_RST_EXT: return RW_POWER;
+    case ESP_RST_SW: return RW_SOFTWARE;
+    case ESP_RST_PANIC: return RW_CRASH;
+    case ESP_RST_INT_WDT: case ESP_RST_TASK_WDT: case ESP_RST_WDT: return RW_WATCHDOG;
+    case ESP_RST_BROWNOUT: return RW_BROWNOUT;
+    case ESP_RST_DEEPSLEEP: return RW_DEEPSLEEP;
+    default: return RW_UNKNOWN;
+  }
+}
+static void readLastStuck() {
+  bootWhy = classicResetWhy();
+  if (rtcStuckMagic == 0x5354554B && esp_reset_reason() == ESP_RST_SW)   // "STUK"
+    lastStuckMs = (uint16_t)(rtcStuckMs > 0xFFFF ? 0xFFFF : rtcStuckMs);
+  rtcStuckMagic = 0;
+}
 static void sendHeartbeat() {
   Heartbeat hb;
   hb.uptime_s = millis() / 1000;
@@ -355,6 +418,14 @@ static void sendHeartbeat() {
   hb.wifi_frames = wifiFrames;
   hb.ble_adv = classicFound;  // this node's Bluetooth count is Classic inquiry results
   hb.link = (espLink.lrCapable() ? HL_LR_CAPABLE : 0) | (paired && espLink.peerLongRange(coreMac) ? HL_LR_ON : 0);
+  hb.tx_wait_ms = (uint16_t)(txWaitMax > 0xFFFF ? 0xFFFF : txWaitMax);
+  hb.stuck_ms = lastStuckMs;
+  hb.reset = bootWhy;
+  hb.heap_kb = (uint16_t)(ESP.getFreeHeap() / 1024);
+  hb.heap_min_kb = (uint16_t)(ESP.getMinFreeHeap() / 1024);
+  hb.losses = linkLosses;
+  hb.release = ssReleaseCode();
+  hb.build = ssBuildStamp;
 #ifdef SS_CYD
   hb.batt_pct = cyd::batteryPercent();
   hb.sd = cydsd::state();
@@ -434,6 +505,9 @@ static void handlePacket(const RxPacket& p) {
     }
     nodeSlot = w.node_index;
     lastCoreContact = millis();
+    saveLinkChannel(homeChannel);
+    searchStep = 0;
+    searchAt = 0;
   } else if (h.type == MSG_COMMAND) {
     if (!paired || memcmp(coreMac, p.src, 6) != 0) return;
     NodeCommand c;
@@ -454,6 +528,12 @@ static void handlePacket(const RxPacket& p) {
     } else if (c.cmd == NC_UNPAIR) {
       Out.println("[classic] the master forgot this node");
       unpairAndRestart();
+    } else if (c.cmd == NC_CHANNEL) {   // repeated for a while: act on the first
+      if (linkChannelValid(c.arg) && c.arg != homeChannel && c.arg != moveTo) {
+        moveTo = c.arg;
+        moveAt = millis() + kNodeMoveDelayMs;
+        Out.printf("[classic] the cluster is moving to channel %u, following in %lu s\n", c.arg, (unsigned long)(kNodeMoveDelayMs / 1000));
+      }
 #ifdef SS_CYD
     } else if (c.cmd == NC_SD_FORMAT) {
       // The master repeats commands for a while: format once per request token.
@@ -494,6 +574,7 @@ static void handlePacket(const RxPacket& p) {
     Config c;
     if (!decodeConfig(pl, n, c)) return;
     lastCoreContact = millis();
+    awaitCfgUntil = 0;   // answered: free to hop
     uint8_t a[kMaxConfigSize], b[kMaxConfigSize];
     const size_t la = encodeConfig(c, a, sizeof(a)), lb = encodeConfig(cfg, b, sizeof(b));
     if (la != lb || memcmp(a, b, la) != 0) applyConfig(c);
@@ -516,6 +597,8 @@ static void emitStatus(uint32_t now) {
   Out.printf("{\"t\":\"status\",\"role\":\"node\",\"board\":\"%s\",\"setup\":true,\"fw\":%u,\"hw\":%u,\"mac\":",
              board, SS_FW_VERSION, (unsigned)SS_NODE_HW);
   jsonMac(myMac);
+  Out.printf(",\"rel\":\"%s\",\"bld\":%lu", SS_RELEASE, (unsigned long)ssBuildStamp);   // which build this is
+  Out.printf(",\"lch\":%u", homeChannel);
   Out.printf(",\"id\":\"%04X\",\"key\":%s,\"ms\":%lu,\"cats\":%u,\"ch\":%u,\"channels\":%u,\"ble_duty\":0,"
              "\"wifi_frames\":%lu,\"ble_adv\":%lu,\"classic\":%lu,\"inquiries\":%lu,\"bt\":%s,\"drops\":%lu",
              myId, clusterKey.length() ? "true" : "false", (unsigned long)now, catMask, curChannel,
@@ -607,6 +690,7 @@ static void handleSerial() {
 void setup() {
   Serial.begin(115200);
   delay(200);
+  readLastStuck();
   prefs.begin("skysentinel", false);
   clusterKey = prefs.isKey("key") ? prefs.getString("key", "") : String("");
   corePinned = prefs.isKey("core") && prefs.getBytes("core", pinnedCore, 6) == 6;
@@ -621,7 +705,10 @@ void setup() {
   WiFi.disconnect();
   esp_read_mac(myMac, ESP_MAC_WIFI_STA);
   myId = nodeIdFromMac(myMac);
-  if (!espLink.begin(clusterKey.c_str(), kHomeChannel, 16)) Out.println("[classic] ESP-NOW init FAILED");
+  savedChannel = prefs.getUChar("lch", kLinkChannelDefault);
+  if (!linkChannelValid(savedChannel)) savedChannel = kLinkChannelDefault;
+  homeChannel = curChannel = savedChannel;
+  if (!espLink.begin(clusterKey.c_str(), homeChannel, 16)) Out.println("[classic] ESP-NOW init FAILED");
   espLink.setLrFast(prefs.getBool("lrfast", true));
   lrRemembered = !unpaired && prefs.getBool("lrlink", false);
   if (corePinned && !unpaired) espLink.addPeer(pinnedCore);
@@ -673,9 +760,15 @@ void setup() {
 static constexpr uint32_t kTxStuckMs = 5000;
 static void checkStuckTx(uint32_t now) {
   static uint32_t since = 0;
-  if (!espLink.inFlight()) { since = 0; return; }
+  if (!espLink.inFlight()) {
+    if (since && now - since > txWaitMax) txWaitMax = now - since;
+    since = 0;
+    return;
+  }
   if (!since) { since = now ? now : 1; return; }
   if (now - since < kTxStuckMs) return;
+  rtcStuckMs = now - since;
+  rtcStuckMagic = 0x5354554B;
   Out.printf("[link] %lu frames stuck in the Wi-Fi driver for %lu ms (send failures %lu, heap %lu), restarting\n",
              (unsigned long)espLink.inFlight(), (unsigned long)(now - since), (unsigned long)espLink.sendFailures(),
              (unsigned long)ESP.getFreeHeap());
@@ -760,11 +853,13 @@ void loop() {
     if (nodePair.done()) {
       prefs.putString("key", nodePair.key());
       prefs.putBytes("core", nodePair.master(), 6);
+      prefs.putUChar("lch", homeChannel);   // the master's channel
       Out.println("[pair] key saved, restarting into the cluster");
       Serial.flush();
       delay(200);
       ESP.restart();
     }
+    if (!nodePair.hasOffer(now) && !nodePair.blinking(now)) searchLinkChannel(now);   // stay put once a master answers
     goHome();
     nodePair.poll(now);
     if (now - lastStatus >= kStatusEveryMs) { lastStatus = now; emitStatus(now); }
@@ -775,6 +870,15 @@ void loop() {
 
   if (now - lastStatus >= kStatusEveryMs) { lastStatus = now; emitStatus(now); }
 
+  if (moveTo && (int32_t)(now - moveAt) >= 0) {   // the cluster is moving: follow
+    Out.printf("[classic] now on channel %u (was %u)\n", moveTo, homeChannel);
+    homeChannel = moveTo;
+    saveLinkChannel(moveTo);
+    setRadioChannel(moveTo);
+    curChannel = moveTo;
+    moveTo = 0;
+    lastCoreContact = now;   // give the master a moment to arrive
+  }
   // Signed: a packet handled during this pass can set lastCoreContact a little after `now`.
   if (paired && (int32_t)(now - lastCoreContact) > (int32_t)kCoreLostMs) {
     Out.printf("[classic] lost master (nothing for %lu s; send failures %lu, not delivered %lu, rx dropped %lu, free heap %lu, min %lu, queue drops %lu), re-pairing\n",
@@ -782,16 +886,18 @@ void loop() {
                (unsigned long)espLink.notDelivered(), (unsigned long)espLink.rxDropped(), (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMinFreeHeap(),
                (unsigned long)queueDrops);
     paired = false;
+    if (linkLosses < 0xFFFF) ++linkLosses;
     defaultConfig();
   }
   if (!paired) {
+    searchLinkChannel(now);   // the master may have moved: try each link channel in turn
     goHome();
     if (now - lastHello >= kHelloEveryMs) { lastHello = now; sendHello(); }
     batch.clear();
     delay(1);
     return;
   }
-  if (now - lastReport >= cfg.report_ms || batch.full()) {
+  if (now - lastReport >= cfg.report_ms || (batch.full() && now - lastReport >= kMinReportGapMs)) {
     goHome();
 #ifdef SS_CYD
     const uint32_t every = kDashBeatMs;
@@ -800,7 +906,7 @@ void loop() {
 #endif
     // Heartbeat first: the master answers it with the config that keeps this node
     // paired, so a busy batch of reports must never crowd it out.
-    if (now - lastHeartbeat >= every) { lastHeartbeat = now; sendHeartbeat(); }
+    if (now - lastHeartbeat >= every) { lastHeartbeat = now; sendHeartbeat(); awaitCfgUntil = now + kBeatListenMs; }
     flushReports(now);
     lastReport = now;
     lastHop = now + kListenWindowMs;
@@ -809,8 +915,11 @@ void loop() {
   }
   const uint64_t chans = wantsWifi() ? (cfg.channel_mask & kMask24) : 0;
   // Don't leave the master's channel while frames to it are still going out.
+  const bool stale = now - lastCoreContact > kStaleContactMs;   // missed several answers: stay and listen
+  if (stale && inquiring) esp_bt_gap_cancel_discovery();
   const bool sending = (espLink.inFlight() && (int32_t)(now - lastHop) < (int32_t)(cfg.dwell_ms + 400))
-                       || (int32_t)(fileBusyUntil - now) > 0;
+                       || (int32_t)(fileBusyUntil - now) > 0 || (int32_t)(awaitCfgUntil - now) > 0 || stale;
+  if (stale) goHome();
   if (chans && !sending && (int32_t)(now - lastHop) >= (int32_t)cfg.dwell_ms) {
     const uint8_t ch = nextChannel(chans, &hopCursor);
     if (ch && ch != curChannel && setRadioChannel(ch)) curChannel = ch;

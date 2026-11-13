@@ -21,6 +21,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import zipfile
@@ -60,6 +61,22 @@ def source_zip(dest, version):
     return out
 
 
+def build_stamp(env):
+    """The build stamp tools/build_stamp.py compiled into this board's firmware
+    (YYMMDDHHMM, as the board reports it), or None for a build without one."""
+    path = os.path.join(ROOT, ".pio", "build", env, "stamp", "build_stamp.cpp")
+    try:
+        m = re.search(r"=\s*(\d+)UL", open(path).read())
+        return int(m.group(1)) if m else None
+    except OSError:
+        return None
+
+
+def stamp_text(stamp):
+    """2611130652 -> '20261113' (the build date, as boards show it)"""
+    return f"20{stamp:010d}"[:8] if stamp else ""
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--version", default=datetime.date.today().strftime("%Y.%m.%d"))
@@ -89,8 +106,10 @@ def main():
             continue
         shutil.copyfile(appbin, os.path.join(app, "firmware", f"{env}.app.bin"))
         shutil.copyfile(factory, os.path.join(app, "firmware", f"{env}.factory.bin"))
+        stamp = build_stamp(env)
         builds.append({"env": env, "label": label, "app": f"{env}.app.bin", "factory": f"{env}.factory.bin",
-                       "app_sha256": sha256(appbin), "factory_sha256": sha256(factory)})
+                       "app_sha256": sha256(appbin), "factory_sha256": sha256(factory),
+                       "bld": stamp, "built": stamp_text(stamp)})
     if missing and not a.allow_missing:
         raise SystemExit(f"not built: {', '.join(missing)} (pio run -e {' -e '.join(missing)}), or pass --allow-missing")
     manifest = {"version": a.version, "built": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), "builds": builds}
@@ -113,7 +132,7 @@ def main():
 <title>SkySentinel downloads</title><link rel="stylesheet" href="../assets/site.css"></head><body><div class="wrap" style="padding:40px 20px">
 <h2>Downloads</h2><p class="kicker">Version {a.version}, built {manifest['built']}.</p>
 <h3>Source</h3><ul>{rows}</ul>
-<h3>Firmware</h3><ul>{''.join(f'<li>{b["label"]}: <a href="../app/firmware/{b["app"]}">update</a> &middot; <a href="../app/firmware/{b["factory"]}">full</a></li>' for b in builds)}</ul>
+<h3>Firmware</h3><ul>{''.join(f'<li>{b["label"]}{(" (built " + b["built"] + ")") if b["built"] else ""}: <a href="../app/firmware/{b["app"]}">update</a> &middot; <a href="../app/firmware/{b["factory"]}">full</a></li>' for b in builds)}</ul>
 <p><a href="SHA256SUMS">SHA256SUMS</a> &middot; <a href="../">back to the site</a></p></div></body></html>""")
 
     with open(os.path.join(dist, "assets", "config.json"), "w") as f:
@@ -127,4 +146,5 @@ def main():
           + (f" (missing: {', '.join(missing)})" if missing else ""))
 
 
-main()
+if __name__ == "__main__":
+    main()

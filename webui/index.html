@@ -84,6 +84,7 @@
   .cat .c { font-size: 14px; white-space: nowrap; flex-shrink: 0; }
   .cat.off { opacity: .45; }
   .cat.warn { border-color: var(--warn); color: var(--warn); }
+  .btn.warn { border-color: var(--warn); color: var(--warn); }
   .cat.crit { border-color: var(--crit); color: var(--crit); }
 
   .tablewrap { overflow-x: auto; max-height: 560px; overflow-y: auto; }
@@ -182,7 +183,41 @@
   .cmdhelp b { letter-spacing: 1px; }
   .cmdhelp table { min-width: 0; width: 100%; font-size: 12px; }
   .cmdhelp td { padding: 3px 6px; border-top: 1px solid var(--line); white-space: normal; vertical-align: top; }
-  .nodegrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+  .nodegrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; }
+  /* Cluster: glance cards, and the details of the one clicked beside them (below on a narrow screen) */
+  button.nodecard { text-align: left; font: inherit; color: inherit; background: var(--bg); width: 100%; cursor: pointer; }
+  button.nodecard:hover { border-color: var(--accent); }
+  .nodecard.sel { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .nc-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .nc-name { font-weight: 700; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1 1 auto; min-width: 0; }
+  .nc-dot { width: 10px; height: 10px; border-radius: 5px; flex: none; background: var(--accent); }
+  .nc-dot.warn { background: var(--warn); }
+  .nc-dot.off { background: var(--muted); }
+  .nc-sub { font-size: 12px; color: var(--muted); }
+  .meters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 4px; }
+  .meter { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .meter > .ml { font-size: 10px; letter-spacing: 1px; color: var(--muted); }
+  .meter > .mv { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px; white-space: nowrap; }
+  .bars { display: flex; align-items: flex-end; gap: 2px; height: 16px; }
+  .bars > span { width: 5px; border-radius: 1px; background: var(--line); }
+  .mbar { position: relative; height: 6px; margin: 5px 0; background: var(--line); border-radius: 3px; }
+  .mbar > .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; }
+  .mbar > .low { position: absolute; top: -3px; width: 2px; height: 12px; background: var(--warn); }
+  .nc-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+  .nc-chips .chip { font-weight: 400; letter-spacing: 0; color: var(--text); border-color: var(--line); }
+  .nc-chips .chip.ok { color: var(--accent); border-color: currentColor; }
+  .nc-chips .chip.warn { color: var(--warn); border-color: currentColor; }
+  .nc-warn { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--warn); background: var(--warn-bg); border-radius: 3px; padding: 4px 8px; }
+  .nodedetail { display: flex; flex-direction: column; gap: 12px; }
+  .lch-bar { display: inline-block; height: 8px; border-radius: 2px; background: var(--accent); vertical-align: middle; margin-right: 8px; }
+  .lch-cur { color: var(--accent); }
+  #lchDialog { width: min(560px, calc(100vw - 32px)); }
+  .nd-sec { display: flex; flex-direction: column; gap: 5px; }
+  .nd-sec > b { font-size: 12px; letter-spacing: 2px; color: var(--muted); border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+  .nd-row { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; }
+  .nd-row > span:first-child { color: var(--muted); white-space: nowrap; }
+  .nd-row[title] > span:first-child, .meter[title] .ml, .nd-sec > b[title] { cursor: help; text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: var(--line); }
+  .nd-row > span:last-child { text-align: right; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 13px; }
   .nodecard { border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
   .nodecard.me { border-color: var(--accent); }
   .nodecard.warn { border-color: var(--warn); }
@@ -275,8 +310,9 @@
     <div class="panel" id="clusterPanel" hidden>
       <h2 id="clusterHead" class="clickable" title="Click to show or hide the node cards"><span><span id="clusterArrow">\u25be</span> CLUSTER</span>
         <span class="row" style="gap:10px"><span class="mono" id="clusterSummary"></span>
+        <button class="btn small" id="lchBtn" title="Which Wi-Fi channel the cluster talks on. Automatic: the master moves it off a crowded channel. Click to see the survey or choose one yourself.">LINK CH 6</button>
         <button class="btn small primary" id="pairOpenBtn" title="Add a board to this cluster: step-by-step">PAIR A NODE</button></span></h2>
-      <div class="pad nodegrid" id="clusterCards"></div>
+      <div class="pad" id="clusterCards"><div class="nodegrid" id="nodeGrid"></div></div>
     </div>
     <div class="cats not-node" id="cats"></div>
     <div class="panel not-node">
@@ -368,7 +404,7 @@
         <b class="sub">MASTER</b>
         <div class="row" style="justify-content:space-between"><span>Work split <span class="hint">split = most coverage · mirror = same plan everywhere, for direction finding</span></span>
           <span class="seg"><button id="modeSplit">SPLIT</button><button id="modeMirror">MIRROR</button></span></div>
-        <div class="row" style="justify-content:space-between; margin-top:8px"><span>Master's own radio listens too <span class="hint">(BLE + channel 6)</span></span>
+        <div class="row" style="justify-content:space-between; margin-top:8px"><span>Master's own radio listens too <span class="hint">(BLE + the link channel)</span></span>
           <span class="seg"><button id="localOn">ON</button><button id="localOff">OFF</button></span></div>
         <div class="row" style="justify-content:space-between; margin-top:8px"><span>Node screens <span class="hint">(boards with a display, e.g. Heltec; off = dark backlight)</span></span>
           <span class="seg"><button id="screensOn">ON</button><button id="screensOff">OFF</button></span></div>
@@ -517,8 +553,8 @@
           <li><b>Standalone:</b> one board does everything. It hops all Wi-Fi channels and scans Bluetooth, keeps
             the device list, and feeds this page. Right for a single C5.</li>
           <li><b>Master:</b> the brain of a cluster. Pairs with nodes over ESP-NOW (a direct radio link, no router),
-            tells each one what to scan, and merges what they hear into one list. It stays on Wi-Fi channel 6 to
-            hear its nodes, and its own radio still listens there and to Bluetooth.</li>
+            tells each one what to scan, and merges what they hear into one list. It stays on the cluster's link channel
+            (6 unless it moved to 1 or 11 to dodge a crowded channel: LINK CH on the cluster panel) to hear its nodes, and its own radio still listens there and to Bluetooth.</li>
           <li><b>Node:</b> a sensor. Scans what the master assigns and reports back once a second. Connect this page
             to the master, not a node, to see devices.</li>
         </ul>
@@ -678,6 +714,18 @@
 </dialog>
 <!--FLASHER:END-->
 
+<dialog id="nodeInfo" aria-labelledby="niTitle">
+  <div class="panel" style="border:0">
+    <h2><span id="niTitle"></span></h2>
+    <div class="pad nodedetail" id="niBody"></div>
+  </div>
+</dialog>
+<dialog id="lchDialog" aria-labelledby="lchTitle">
+  <div class="panel" style="border:0">
+    <h2><span id="lchTitle">LINK CHANNEL</span></h2>
+    <div class="pad nodedetail" id="lchBody"></div>
+  </div>
+</dialog>
 <dialog id="nodeEdit" aria-labelledby="neTitle">
   <div class="panel" style="border:0">
     <h2><span id="neTitle"></span></h2>
@@ -879,7 +927,7 @@ const fmtUp = (sec) => { sec = sec || 0; const h = Math.floor(sec / 3600), m = M
 function nodeJob(n, cats) {
   const parts = [];
   if (n.role === "ble" || n.role === "both") { if (n.duty) parts.push(`Bluetooth ${n.duty}%`); }
-  if (n.role === "wifi" || n.role === "both") parts.push(n.chans ? `Wi-Fi ${n.chans} ch${n.caps & CAPS.wifi5 ? "" : " (2.4 GHz)"}` : "Wi-Fi ch 6");
+  if (n.role === "wifi" || n.role === "both") parts.push(n.chans ? `Wi-Fi ${n.chans} ch${n.caps & CAPS.wifi5 ? "" : " (2.4 GHz)"}` : `Wi-Fi ch ${(state.status && state.status.lch) || 6}`);
   if (n.caps & CAPS.classic) parts.push("Classic Bluetooth");
   if (n.caps & CAPS.lora) parts.push(cats & (1 << CAT_INDEX.lora) ? "LoRa 915" : "LoRa (category off)");
   if (n.caps & CAPS.dash) parts.push("Dashboard");
@@ -939,8 +987,21 @@ function bindNodeEdit() {
     const g = e.target.closest("[data-gps]");
     if (g) { openGps(g.dataset.gps); return; }
     const b = e.target.closest("[data-edit]");
-    if (b) openNodeEdit(b.dataset.edit);
+    if (b) { openNodeEdit(b.dataset.edit); return; }
+    const c = e.target.closest("[data-node]");
+    if (c) { detailId = c.dataset.node; if (state.status) renderCluster(state.status); }
   });
+  $("niBody").addEventListener("click", (e) => {
+    const g = e.target.closest("[data-gps]");
+    if (g) { openGps(g.dataset.gps); return; }
+    const b = e.target.closest("[data-edit]");
+    if (b) { const id = b.dataset.edit; $("nodeInfo").close(); openNodeEdit(id); return; }
+    const a = e.target.closest("[data-act]");
+    if (a) { detailAction(a.dataset.act, a.dataset.id); return; }
+    if (e.target.closest("[data-close-detail]")) $("nodeInfo").close();
+  });
+  // However it closes (CLOSE, Esc, EDIT): nothing is open any more
+  $("nodeInfo").addEventListener("close", () => { detailId = null; $("niBody").dataset.html = ""; if (state.status) renderCluster(state.status); });
   $("gpsClose").onclick = closeGps;
   $("gpsDialog").addEventListener("cancel", () => { clearInterval(gpsWin.timer); gpsWin.id = null; });
   $("gpsBody").addEventListener("click", (e) => {
@@ -1217,12 +1278,254 @@ function noteNodeRestarts(nodes) {
     nodeUpSeen[n.id] = n.up;
   }
 }
-function healthText(n) {
-  if (!n.heap) return "";
-  const bad = RST_BAD.has(n.rst);
-  return `<div class="hint mono">last start: <span style="${bad ? "color:var(--warn)" : ""}">${esc(RST_WHY[n.rst] || n.rst)}</span>` +
-    ` \u00b7 memory ${n.heap} KB free (low ${n.heapmin})` +
-    ` \u00b7 <span style="${n.losses ? "color:var(--warn)" : ""}">lost master ${n.losses}\u00d7 since then</span></div>`;
+
+// ---------------------------------------------------------------------------
+// Cluster cards: a glance at each board (link, loss, memory, its job), and a click opens
+// everything about it beside them, with its actions (EDIT, IDENTIFY, REBOOT, FORGET).
+let detailId = null;   // the board whose details are open ("me" = the master)
+const lossPct = (n) => (n.frames + n.lost ? (100 * n.lost) / (n.frames + n.lost) : 0);   // since the master started
+// Recent loss: the master sends totals; the page keeps a sample every 10 s for an hour and
+// compares. A window longer than the page has been watching uses what it has (span).
+const lossHist = {};
+function noteLoss(nodes) {
+  const now = Date.now();
+  for (const n of nodes) {
+    const h = (lossHist[n.id] ||= []);
+    const last = h[h.length - 1];
+    if (last && (n.frames < last.f || n.lost < last.l)) h.length = 0;   // its counts restarted (master restart)
+    if (!last || now - last.t >= 10000) h.push({ t: now, f: n.frames, l: n.lost });
+    while (h.length > 2 && now - h[1].t > 3700000) h.shift();   // keep just over an hour
+  }
+}
+// { pct, span (ms covered), frames } over the last `ms`, or null with no history yet
+function lossOver(n, ms) {
+  // Newer masters keep these themselves: they survive a page reload and land in its log
+  const k = ms <= 600000 ? "l10" : "l60";
+  if (n[k] != null) return { pct: n[k] / 10, span: (n[k + "s"] || 0) * 1000 };
+  const h = lossHist[n.id];
+  if (!h || !h.length) return null;
+  const now = Date.now();
+  let base = h[0];   // the newest sample at least `ms` old (the oldest there is, if none)
+  for (const x of h) { if (now - x.t >= ms) base = x; else break; }
+  const df = n.frames - base.f, dl = n.lost - base.l;
+  if (df + dl <= 0) return { pct: 0, span: now - base.t, frames: 0 };
+  return { pct: (100 * dl) / (df + dl), span: now - base.t, frames: df + dl };
+}
+const recentLoss = (n) => { const r = lossOver(n, 600000); return r && r.span >= 60000 ? r.pct : lossPct(n); };
+const spanText = (ms) => (ms >= 3540000 ? "1 h" : ms >= 60000 ? Math.round(ms / 60000) + " min" : Math.round(ms / 1000) + " s");
+// Which firmware a board runs: release plus build stamp (YYMMDDHHMM), from 2.1.3 on
+function fwText(rel, bld) {
+  if (!rel) return "2.1.2 or older (doesn't say which build)";
+  if (!bld) return esc(rel);
+  const t = String(bld).padStart(10, "0");   // YYMMDDHHMM: shown as the date, 20261113
+  return `${esc(rel)} \u00b7 built 20${t.slice(0, 6)}`;
+}
+const lossVar = (p) => (p < 2 ? "var(--accent)" : p < 10 ? "var(--warn)" : "var(--crit)");
+const linkLevel = (d) => (d > -55 ? 4 : d > -67 ? 3 : d > -80 ? 2 : d > -90 ? 1 : 0);
+const MEM_SCALE = 160;   // KB: a full memory bar
+function nodeWarn(n) {
+  if (!n.online) return `offline${n.age ? ", last heard " + fmtUp(n.age) + " ago" : ""}`;
+  const p = recentLoss(n);
+  if (p >= 10) return `${p.toFixed(1)}% of frames lost lately`;
+  if (n.stk) return `restarted: frames stuck ${(n.stk / 1000).toFixed(1)} s`;
+  if (RST_BAD.has(n.rst)) return `last start: ${RST_WHY[n.rst] || n.rst}`;
+  if (!n.ack) return "getting its orders";
+  return "";
+}
+// Hover help for the cluster cards and the details window (title tooltips)
+const HELP = {
+  LINK: "How well the master hears this board. More bars = stronger signal; below -80 dBm frames start going missing.",
+  "LOSS 10M": "Share of this board's frames that never reached the master in the last 10 minutes. Under 2% is normal, over 10% needs a look.",
+  MEMORY: "Free memory now. The tick mark is the lowest it has been since the board started; if that gets near the left end, the board may run out.",
+  LOOP: "The master's slowest pass through its main loop. Long passes (over 300 ms) mean it may be too busy to keep up with its nodes.",
+  "LINK TO THE MASTER": "How the radio link between this board and the master is doing.",
+  HEALTH: "How the board itself is doing: firmware, uptime, restarts, memory, power.",
+  "RADIO DRIVER": "Numbers from the Wi-Fi driver, which has a known bug (esp-idf #19269) that can leave frames stuck.",
+  SCANNING: "What this board has been told to listen to, and what it has heard.",
+  "ITS OWN RADIO": "What the master listens to itself, besides running the cluster.",
+  firmware: "Release and build time of the firmware on this board. Orange = different from the master's.",
+  signal: "How strongly the master hears this board, in dBm. -30 is very close, -90 is the edge.",
+  "last heard": "Time since the master last got anything from this board.",
+  frames: "Frames the master received from this board since the master started, and how many went missing on the way.",
+  "loss, last 10 min": "Missing frames over the last 10 minutes. This is the number the card shows.",
+  "loss, last hour": "Missing frames over the last hour, to tell a bad moment from a bad spot.",
+  "loss since the master started": "Missing frames since the master last started, including any rough patch right after it.",
+  "lost the master": "Times this board stopped hearing the master and had to find it again, since the board started.",
+  "link setting": "Normal Wi-Fi, or Long Range (slower but reaches farther). Set with EDIT.",
+  "Long Range now": "Whether the link is using Long Range right now, and whether this board can.",
+  slot: "This board's position in the master's list.",
+  up: "Time since this board last started.",
+  "last start": "Why the board last started. Crash, watchdog or power dips are worth a look; USB resets are just flashing or a serial monitor.",
+  "memory free": "Free memory now, and the lowest it has been since the board started.",
+  power: "USB power or battery level.",
+  "slowest send": "The longest the Wi-Fi driver took to confirm a frame was sent. Under 300 ms is fine.",
+  "stuck before the last restart": "If the board restarted because frames were stuck in the driver, how long they were stuck.",
+  "slowest loop pass": "The master's slowest pass through its main loop.",
+  "frames dropped on arrival": "Frames that reached the master but were thrown away because it was too busy to take them. Should stay at 0.",
+  "flood skipped": "During a flood (a beacon or Bluetooth spam tool nearby, thousands of fake devices) the master files sightings for at most 40 ms a pass, so it keeps answering its nodes. Past that it skips ordinary sightings (they come round again in seconds) but always files strong matches, anything 50%+ confident, and sub-GHz bursts. A start looks like this for a minute or two: every device is new to the master.",
+  "USB output kicks / resets": "Times the master's USB output stalled and had to be restarted.",
+  job: "What the master told this board to listen to.",
+  scanning: "What the master listens to itself.",
+  "pinned to": "A job you pinned with EDIT, instead of letting the master choose.",
+  "Wi-Fi frames": "Wi-Fi frames this board has heard since it started.",
+  "Bluetooth adverts": "Bluetooth advertisements this board has heard since it started.",
+  "Classic Bluetooth found": "Classic Bluetooth devices found by inquiry scans since it started.",
+  LoRa: "LoRa listening mode (Meshtastic and similar).",
+  GPS: "GPS fix and satellites in view.",
+  "SD card": "Whether the board is logging to its SD card.",
+  screen: "Whether this board's screen is on, off, or following the master's setting.",
+};
+const helpAttr = (k) => (HELP[k] ? ` title="${esc(HELP[k])}"` : "");
+const WARN_HELP = [
+  [/^offline/, "The master hasn't heard this board for over 15 seconds."],
+  [/frames lost lately/, "Over 10% of this board's frames went missing in the last 10 minutes. Click for the details."],
+  [/^restarted: frames stuck/, "The board restarted itself because frames got stuck in the Wi-Fi driver (known bug). It's back on its own."],
+  [/^last start/, "The board's last restart wasn't a normal one. Click for the details."],
+  [/^getting its orders/, "The master sent this board a new job and is waiting for it to confirm. Usually clears in seconds."],
+];
+const warnHelp = (w) => { const h = WARN_HELP.find(([re]) => re.test(w)); return h ? ` title="${esc(h[1])}"` : ""; };
+function meterHtml(label, inner, value, valueColor) {
+  return `<div class="meter"${helpAttr(label)}><span class="ml">${label}</span>${inner}<span class="mv"${valueColor ? ` style="color:${valueColor}"` : ""}>${value}</span></div>`;
+}
+function memMeter(heap, low) {
+  if (!heap) return meterHtml("MEMORY", `<div class="mbar"></div>`, "not sent", "var(--muted)");
+  const pct = (k) => Math.min(100, (100 * k) / MEM_SCALE);
+  return meterHtml("MEMORY", `<div class="mbar"><span class="fill" style="width:${pct(heap)}%;background:var(--accent)"></span>` +
+    (low ? `<span class="low" style="left:${pct(low)}%" title="lowest since it started: ${low} KB"></span>` : "") + `</div>`, `${heap} KB`);
+}
+function nodeChips(n, cats) {
+  const jobHelp = (t) => /^Bluetooth \d/.test(t) ? `Listens for Bluetooth ${t.split(" ")[1]} of the time, Wi-Fi the rest`
+    : /^Wi-Fi/.test(t) ? "Hops across this many Wi-Fi channels, as split up by the master"
+    : /^Classic Bluetooth/.test(t) ? "Runs Classic Bluetooth inquiry scans (headsets, speakers, cars)"
+    : /^Dashboard/.test(t) ? "Shows the cluster on its own screen"
+    : /^LoRa/.test(t) ? "Listens on LoRa (Meshtastic and similar)"
+    : /^Sub-GHz/i.test(t) ? "Watches sub-GHz bands (key fobs, tire sensors)" : "";
+  const out = nodeJob(n, cats).split(" \u00b7 ").map((t) => `<span class="chip"${jobHelp(t) ? ` title="${esc(jobHelp(t))}"` : ""}>${esc(t)}</span>`);
+  if (n.force === "all") out.push(`<span class="chip ok" title="Pinned with EDIT to scan everything on its own">EVERYTHING</span>`);
+  else if (n.force && n.force !== "auto") out.push(`<span class="chip" title="Its job is pinned with EDIT instead of chosen by the master">PINNED</span>`);
+  if (n.lr & 2) out.push(`<span class="chip ok" title="Talking to the master in Espressif Long Range mode">LR${n.lmd === "lr250" ? " 250" : n.lmd === "lr500" ? " 500" : ""}</span>`);
+  const gps = gpsText(n.gps, n.sats, n.id);
+  if (gps) out.push(gps);
+  const sd = sdText(n.sd);
+  if (sd) out.push(sd);
+  if (n.screen === 0) out.push(`<span class="chip">screen off</span>`);
+  if (n.batt !== undefined && n.batt !== 255) out.push(`<span class="chip${n.batt !== 254 && n.batt <= 15 ? " warn" : ""}" title="${n.batt === 254 ? "Running on USB power" : "Battery level"}">${n.batt === 254 ? "USB power" : "battery " + n.batt + "%"}</span>`);
+  return out.join("");
+}
+function nodeCardHtml(n, cats) {
+  const warn = nodeWarn(n);
+  const p = recentLoss(n);   // the last 10 minutes (all of it until the page has watched a minute)
+  const lv = n.online ? linkLevel(n.link) : 0;
+  const bars = [1, 2, 3, 4].map((i) => `<span style="height:${4 * i}px${i <= lv ? ";background:" + lossVar(p) : ""}"></span>`).join("");
+  return `<button type="button" class="nodecard${warn ? " warn" : ""}${!n.online ? " bad" : ""}${detailId === n.id ? " sel" : ""}" data-node="${esc(n.id)}" aria-pressed="${detailId === n.id}">
+    <div class="nc-top"><span class="nc-dot${!n.online ? " off" : warn ? " warn" : ""}"></span><span class="nc-name">${esc(n.label || n.id)}</span></div>
+    <div class="nc-sub mono">${esc(n.id)} \u00b7 ${HW_NAMES[n.hw] || "node"}</div>
+    <div class="meters">
+      ${meterHtml("LINK", `<div class="bars" aria-hidden="true">${bars}</div>`, n.online ? `${n.link} dBm` : "offline")}
+      ${meterHtml("LOSS 10M", `<div class="mbar"><span class="fill" style="width:${Math.min(100, p * 2)}%;background:${lossVar(p)}"></span></div>`, p < 0.05 ? "0%" : p.toFixed(1) + "%", lossVar(p))}
+      ${memMeter(n.heap, n.heapmin)}
+    </div>
+    <div class="nc-chips">${nodeChips(n, cats)}</div>
+    ${warn ? `<div class="nc-warn"${warnHelp(warn)}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l9 16H3z"></path><path d="M12 10v4"></path><path d="M12 17h.01"></path></svg><span>${esc(warn)}</span></div>` : ""}
+  </button>`;
+}
+function masterCardHtml(s) {
+  const own = s.local === false ? "own radio off" : `Bluetooth ${s.ble_duty}% \u00b7 Wi-Fi ch ${s.lch || 6}`;
+  return `<button type="button" class="nodecard me${detailId === "me" ? " sel" : ""}" data-node="me" aria-pressed="${detailId === "me"}">
+    <div class="nc-top"><span class="nc-dot"></span><span class="nc-name">${esc(s.id || "master")}</span><span class="chip ok">MASTER</span></div>
+    <div class="nc-sub mono">${esc(s.id || "")} \u00b7 ${HW_NAMES[s.hw] || "board"}</div>
+    <div class="meters">
+      ${meterHtml("LINK", `<div class="bars" aria-hidden="true">${[1, 2, 3, 4].map((i) => `<span style="height:${4 * i}px;background:var(--accent)"></span>`).join("")}</div>`, "this page")}
+      ${meterHtml("LOOP", `<div class="mbar"><span class="fill" style="width:${Math.min(100, (s.loop_max || 0) / 5)}%;background:${(s.loop_max || 0) > 300 ? "var(--warn)" : "var(--accent)"}"></span></div>`, `${s.loop_max ?? "-"} ms`)}
+      ${memMeter(s.heap, s.heapmin)}
+    </div>
+    <div class="nc-chips"><span class="chip">${esc(own)}</span>${s.gps ? gpsText(s.gps.st, s.gps.sats, s.id) : ""}</div>
+  </button>`;
+}
+// One section of the detail panel: [label, value, color?] rows
+function ndSection(title, rows) {
+  return `<div class="nd-sec"><b${helpAttr(title)}>${title}</b>${rows.filter(Boolean).map(([k, v, c]) =>
+    `<div class="nd-row"${helpAttr(k)}><span>${k}</span><span${c ? ` style="color:${c}"` : ""}>${v}</span></div>`).join("")}</div>`;
+}
+function detailHtml(s) {
+  const head = (dotCls, name, sub) => `<div class="nc-top"><span class="nc-dot${dotCls}"></span><span class="nc-sub mono" style="font-size:13px">${sub}</span></div>`;
+  if (detailId === "me") {
+    return head("", s.id || "master", `${esc(s.mac || "")} \u00b7 ${HW_NAMES[s.hw] || "board"} \u00b7 runs this page`) +
+      ndSection("HEALTH", [
+        ["firmware", fwText(s.rel, s.bld)],
+        ["up", fmtUp(Math.floor((s.ms || 0) / 1000))],
+        s.rst && ["last start", esc(RST_WHY[s.rst] || s.rst), RST_BAD.has(s.rst) ? "var(--warn)" : ""],
+        s.heap && ["memory free", `${s.heap} KB (low ${s.heapmin} KB)`],
+        ["slowest loop pass", `${s.loop_max ?? "-"} ms`],
+        ["USB output kicks / resets", `${s.usb_kicks ?? 0} / ${s.usb_resets ?? 0}`],
+      ]) +
+      ndSection("ITS OWN RADIO", [
+        ["scanning", s.local === false ? "off (only merges its nodes)" : `Bluetooth ${s.ble_duty}% \u00b7 Wi-Fi ch ${s.lch || 6}`],
+        s.shed ? ["flood skipped", `${(s.shedn || 0).toLocaleString()} ordinary sightings in ${s.shed.toLocaleString()} frames: a flood or spam tool nearby, or the first minutes after a start; important ones are always filed`, "var(--warn)"] : null,
+        ["frames dropped on arrival", String(s.rx_dropped ?? 0)],
+      ]) + `<div class="row" style="justify-content:flex-end;padding-top:4px;border-top:1px solid var(--line)"><button type="button" class="btn" data-close-detail>CLOSE</button></div>`;
+  }
+  const n = (s.nodes || []).find((x) => x.id === detailId);
+  if (!n) return "";
+  const p = lossPct(n);
+  const warn = nodeWarn(n);
+  return head(!n.online ? " off" : warn ? " warn" : "", n.label || n.id,
+      `${esc(n.id)} \u00b7 ${HW_NAMES[n.hw] || "node"} \u00b7 ${!n.online ? "offline" : n.ack ? "online" : "getting its orders"}`) +
+    ndSection("LINK TO THE MASTER", [
+      ["signal", n.online ? `${n.link} dBm` : "\u2014"],
+      ["last heard", n.age ? `${fmtUp(n.age)} ago` : "now"],
+      ["frames", `${n.frames.toLocaleString()} received \u00b7 ${n.lost.toLocaleString()} lost`, lossVar(p)],
+      ...[[600000, "loss, last 10 min"], [3600000, "loss, last hour"]].map(([ms, k]) => {
+        const r = lossOver(n, ms);
+        if (!r) return null;
+        if (r.span < 60000) return [k, "measuring (first minute)"];
+        const part = r.span < ms - 15000 ? ` (only ${spanText(r.span)} so far)` : "";
+        return [k, `${r.pct.toFixed(1)}%${part}`, lossVar(r.pct)];
+      }),
+      ["loss since the master started", `${p.toFixed(1)}%`, lossVar(p)],
+      n.losses !== undefined && ["lost the master", `${n.losses}\u00d7 since it started`, n.losses ? "var(--warn)" : ""],
+      ["link setting", n.lmd === "auto" || !n.lmd ? "follows the master" : n.lmd === "normal" ? "normal" : n.lmd === "lr250" ? "Long Range 250" : "Long Range 500"],
+      ["Long Range now", n.lr & 2 ? "on" : n.lr & 1 ? "off (capable)" : "not capable"],
+      ["slot", String(n.slot)],
+    ]) +
+    ndSection("HEALTH", [
+      ["firmware", fwText(n.rel, n.bld), n.rel !== (state.status || {}).rel ? "var(--warn)" : ""],
+      ["up", fmtUp(n.up)],
+      n.rst && ["last start", esc(RST_WHY[n.rst] || n.rst), RST_BAD.has(n.rst) ? "var(--warn)" : ""],
+      ["memory free", n.heap ? `${n.heap} KB (low ${n.heapmin} KB)` : "not sent by this board"],
+      ["power", n.batt === 254 ? "USB" : n.batt !== undefined && n.batt !== 255 ? `battery ${n.batt}%` : "\u2014"],
+    ]) +
+    ndSection("RADIO DRIVER", [
+      ["slowest send", n.txw ? `${n.txw} ms` : n.txw === 0 ? "under 1 ms" : "\u2014", n.txw > 300 ? "var(--warn)" : ""],
+      ["stuck before the last restart", n.stk ? `${(n.stk / 1000).toFixed(1)} s` : "never", n.stk ? "var(--warn)" : ""],
+    ]) +
+    ndSection("SCANNING", [
+      ["job", esc(nodeJob(n, s.cats))],
+      n.force && n.force !== "auto" && ["pinned to", n.force === "all" ? "EVERYTHING" : esc(n.force)],
+      ["Wi-Fi frames", Number(n.wifi || 0).toLocaleString()],
+      [n.hw === 6 || n.hw === 3 ? "Classic Bluetooth found" : "Bluetooth adverts", Number(n.ble || 0).toLocaleString()],
+      n.lmode && ["LoRa", `${esc(n.lmode)}${n.lslot ? " \u00b7 slot " + n.lslot : ""}`],
+      n.gps && n.gps !== "none" && ["GPS", `${esc(n.gps)}${n.sats ? " \u00b7 " + n.sats + " satellites" : ""}`],
+      n.sd && n.sd !== "none" && ["SD card", esc(n.sd)],
+      ["screen", n.screen === 0 ? "off" : n.screen === 1 ? "on" : "follows the master"],
+    ]) +
+    `<div class="row" style="padding-top:4px;border-top:1px solid var(--line)">
+      <button type="button" class="btn primary" data-edit="${esc(n.id)}">EDIT</button>
+      <button type="button" class="btn" data-act="identify" data-id="${esc(n.id)}">IDENTIFY</button>
+      <button type="button" class="btn" data-act="reboot" data-id="${esc(n.id)}">REBOOT</button>
+      <button type="button" class="btn" style="color:var(--crit)" data-act="forget" data-id="${esc(n.id)}">FORGET</button>
+      <span style="flex:1"></span><button type="button" class="btn" data-close-detail>CLOSE</button></div>`;
+}
+function detailAction(act, id) {
+  const n = (state.status?.nodes || []).find((x) => x.id === id);
+  if (!n || !state.link) return;
+  const who = n.label ? `${n.label} (${n.id})` : n.id;
+  if (act === "forget" && !confirm(`Forget ${who}?\n\nIt leaves the cluster and waits to be paired again.`)) return;
+  editId = id;
+  nodeCmd(act);
+  if (act === "identify") addEvent(0, `${who} will flash THIS ONE when it next checks in (within ~5 s)`);
+  if (act === "reboot") addEvent(0, `${who} will restart when it next checks in (within ~5 s)`);
+  if (act === "forget") detailId = null;
 }
 
 function renderCluster(s) {
@@ -1231,30 +1534,119 @@ function renderCluster(s) {
   if (!show) return;
   const nodes = s.nodes || [];
   noteNodeRestarts(nodes);
+  noteLoss(nodes);
+  renderLinkCh(s);
   const online = nodes.filter((n) => n.online).length;
-  $("clusterSummary").textContent = `${online} of ${nodes.length} node${nodes.length === 1 ? "" : "s"} online \u00b7 ${s.mode || "split"} mode \u00b7 node screens ${s.screens === false ? "off" : "on"}`;
-  const me = `<div class="nodecard me">
-      <div class="row" style="justify-content:space-between"><b>${esc(s.id || "")} \u00b7 ${HW_NAMES[s.hw] || "board"}</b><span class="chip ok">MASTER</span></div>
-      <div>${s.local === false ? "Own radio off" : `Own radio: Bluetooth ${s.ble_duty}% \u00b7 Wi-Fi ch 6`}${s.gps ? " " + gpsText(s.gps.st, s.gps.sats, s.id) : ""}</div>
-      <div class="hint mono">${s.mac || ""} \u00b7 runs this page \u00b7 merges everything</div>
-      <div class="hint mono">up ${fmtUp(Math.floor((s.ms || 0) / 1000))}${s.rst ? ` \u00b7 last start: <span style="${RST_BAD.has(s.rst) ? "color:var(--warn)" : ""}">${esc(RST_WHY[s.rst] || s.rst)}</span>` : ""}</div></div>`;
+  $("clusterSummary").textContent = `${online} of ${nodes.length} node${nodes.length === 1 ? "" : "s"} online \u00b7 ${s.mode || "split"} mode \u00b7 node screens ${s.screens === false ? "off" : "on"} \u00b7 click a card for details`;
   $("clusterCards").hidden = !clusterOpen;
   $("clusterArrow").textContent = clusterOpen ? "\u25be" : "\u25b8";
-  const cards = nodes.map((n) => {
-    const state = !n.online ? ["OFFLINE", "bad"] : n.ack ? ["ONLINE", "ok"] : ["GETTING ORDERS", "warn"];
-    const loss = n.frames ? (100 * n.lost / (n.frames + n.lost)).toFixed(1) : "0";
-    const bt = n.hw === 6 ? `Classic found ${n.ble}` : `BLE adverts ${n.ble}`;
-    return `<div class="nodecard ${state[1]}">
-      <div class="row" style="justify-content:space-between"><b>${n.label ? esc(n.label) + " \u00b7 " : ""}${esc(n.id)} \u00b7 ${HW_NAMES[n.hw] || "node"}</b>
-        <span class="row"><span class="chip ${state[1]}">${state[0]}</span><button class="btn small" data-edit="${esc(n.id)}">EDIT</button></span></div>
-      <div>${nodeJob(n, s.cats)}${n.force === "all" ? ` <span class="tag">EVERYTHING</span>` : n.force && n.force !== "auto" ? ` <span class="tag">PINNED</span>` : ""}${n.screen === 0 ? ` <span class="tag">SCREEN OFF</span>` : ""}${n.lmode && n.lmode !== "auto" ? ` <span class="tag">LORA ${esc(n.lmode.toUpperCase())}${n.lslot ? " SLOT " + n.lslot : ""}</span>` : ""}</div>
-      ${gpsText(n.gps, n.sats) || sdText(n.sd) || (n.lr & 2) ? `<div>${gpsText(n.gps, n.sats, n.id)} ${sdText(n.sd)}${n.lr & 2 ? ` <span class="chip ok" title="Talking to the master in Espressif Long Range mode">LR${n.lmd === "lr250" ? " 250" : n.lmd === "lr500" ? " 500" : ""}</span>` : ""}</div>` : ""}
-      <div class="mono">link ${n.link} dBm \u00b7 heard ${n.age ? n.age + " s ago" : "now"} \u00b7 packets ${n.frames} \u00b7 lost ${n.lost} (${loss}%)</div>
-      <div class="hint mono">up ${fmtUp(n.up)} \u00b7 Wi-Fi frames ${n.wifi} \u00b7 ${bt}${battText(n.batt)} \u00b7 slot ${n.slot}</div>${healthText(n)}</div>`;
-  }).join("");
-  $("clusterCards").innerHTML = me + (cards || `<div class="nodecard"><span class="hint">No nodes yet. Press <b>PAIR A NODE</b> above and follow the steps: power the node up next to this master, check its code, ACCEPT.</span></div>`);
+  if (detailId && detailId !== "me" && !nodes.some((n) => n.id === detailId)) detailId = null;   // forgotten meanwhile
+  $("nodeGrid").innerHTML = masterCardHtml(s) + (nodes.map((n) => nodeCardHtml(n, s.cats)).join("") ||
+    `<div class="nodecard"><span class="hint">No nodes yet. Press <b>PAIR A NODE</b> above and follow the steps: power the node up next to this master, check its code, ACCEPT.</span></div>`);
+  renderNodeInfo(s);
+}
+// The details window (like EDIT's): opened by a card, kept live while open.
+function nodeInfoTitle(s) {
+  if (detailId === "me") return `${s.id || "master"} \u00b7 ${HW_NAMES[s.hw] || "board"} \u00b7 MASTER`;
+  const n = (s.nodes || []).find((x) => x.id === detailId);
+  return n ? `${n.label ? n.label + " \u00b7 " : ""}${n.id} \u00b7 ${HW_NAMES[n.hw] || "node"}` : "";
+}
+function renderNodeInfo(s) {
+  const dlg = $("nodeInfo");
+  const d = detailId ? detailHtml(s) : "";
+  if (!d) { if (dlg.open) dlg.close(); return; }
+  $("niTitle").textContent = nodeInfoTitle(s);
+  // Redraw only when it changed, so a button being pressed isn't replaced mid-click.
+  const body = $("niBody");
+  if (body.dataset.html !== d) { body.innerHTML = d; body.dataset.html = d; }
+  if (!dlg.open) dlg.showModal();
 }
 
+// ---------------------------------------------------------------------------
+// Link channel: which of 1 / 6 / 11 the cluster talks on. The master surveys and, in
+// automatic mode, moves it; the buttons here pin a channel or go back to automatic.
+// The survey numbers are the master's; the "biggest" lines are worked out here from the
+// live device list, with the same weights (ss_linkchan.cpp), to explain them.
+function lchCost(link, d) {
+  if (d.k !== "w" || !d.ch || d.ch > 13 || d.r == null) return 0;
+  const dist = Math.abs(d.ch - link);
+  if (dist > 4) return 0;
+  const r = Math.max(-95, Math.min(-20, d.r));
+  const e = Math.pow(10, (r + 95) / 30);
+  const overlap = [0, 1, 0.8, 0.5, 0.2][dist];
+  const ap = !!d.ap || /^Access point/.test(d.s || "");
+  if (ap) return dist === 0 ? e * (0.25 + (d.ap && d.ap[4] !== 255 ? d.ap[4] / 255 : 0.15)) : e * overlap;
+  return e * (dist === 0 ? 0.15 : 0.3 * overlap);
+}
+function lchTop(link) {
+  return (state.devices || []).map((d) => [lchCost(link, d), d]).filter(([c]) => c >= 1)
+    .sort((a, b) => b[0] - a[0]).slice(0, 2)
+    .map(([, d]) => `${esc(d.n || d.m)} (ch ${d.ch}${d.ch === link ? "" : ", overlaps"}, ${d.r} dBm)`).join("; ");
+}
+// What you just pressed, so the window answers at once and then follows it through:
+// sent -> the master's answer (ack) -> the move finishing (status). {cmd, at, text, done}
+let lchPending = null;
+function lchStep(s) {
+  const p = lchPending;
+  if (!p) return "";
+  const target = /^\d+$/.test(p.cmd) ? +p.cmd : (p.moveTo || 0);
+  if (!p.done && p.acked && !s.lchto && (!target || s.lch === target)) {   // finished
+    p.done = Date.now();
+    p.text = target ? `Done: the cluster is on channel ${s.lch}.` : p.text;
+  }
+  if (p.done && Date.now() - p.done > 6000) { lchPending = null; return ""; }
+  if (!p.acked && Date.now() - p.at > 10000) p.text = "No answer from the master yet. It may be busy; the status will catch up.";
+  return `<div class="nc-warn" style="color:var(--accent); background:transparent; border:1px solid var(--line)">${esc(p.text)}</div>`;
+}
+function lchHtml(s) {
+  const ch = s.lch || 6, auto = s.lchm !== "fixed", aim = s.lchto || ch;
+  const cost = s.lchc || [0, 0, 0], max = Math.max(1, ...cost);
+  const best = [1, 6, 11][cost.indexOf(Math.min(...cost))];
+  const nodes = (s.nodes || []).filter((n) => n.online && n.l10 != null);
+  const loss = nodes.length ? nodes.reduce((a, n) => a + n.l10, 0) / nodes.length / 10 : null;
+  const now = [
+    ["channel", s.lchto ? `${ch}, moving to ${s.lchto} now…` : String(ch)],
+    ["mode", auto ? "automatic: moves when another channel is clearly better for 30 min running (and the link didn't do worse there before), at most every 6 h" : "fixed (you chose it)"],
+    auto && s.lchnext != null ? ["next check", s.lchnext ? `in ${fmtUp(s.lchnext)}` : "now"] : null,
+    s.lchmv != null ? ["last move", `${s.lchfrom} → ${ch}, ${s.lchwhy === "manual" ? "by you" : "automatic"}, ${fmtUp(s.lchmv)} ago`] : null,
+    auto && s.lchs ? ["leaning toward", `ch ${s.lchs[0]}: clearer for ${s.lchs[1]} of the ${s.lchs[2]} checks in a row it needs`] : null,
+    s.lchv && s.lchl ? ["turned down", `ch ${s.lchv}: the link lost more there (${(s.lchl[[1, 6, 11].indexOf(s.lchv)] / 10).toFixed(1)}%) than it does here now`, "var(--warn)"] : null,
+    loss != null ? ["link loss lately", `${loss.toFixed(1)}% (average of the nodes)`, lossVar(loss)] : null,
+  ];
+  const rows = [1, 6, 11].map((c, i) => {
+    const w = Math.round((cost[i] / max) * 140), tag = c === ch ? " · current" : (c === best && c !== ch ? " · best" : "");
+    const top = lchTop(c), ml = s.lchl ? s.lchl[i] : -1, raw = s.lchr ? s.lchr[i] : null;
+    const extra = [raw != null && raw !== cost[i] ? `right now ${raw}` : "", ml >= 0 ? `link loss measured here ${(ml / 10).toFixed(1)}%` : "", top ? `biggest: ${top}` : ""].filter(Boolean).join(" · ");
+    return [`ch ${c}${tag}`, `<span class="lch-bar" style="width:${Math.max(w, 2)}px"></span>${cost[i]}` + (extra ? `<div class="hint" style="font-family:inherit; white-space:normal">${extra}</div>` : ""),
+      c === ch ? "var(--accent)" : ""];
+  });
+  const busy = lchPending && !lchPending.done;
+  const btn = (cmd, label, on, help) => `<button class="btn${on ? " primary" : ""}" data-lch="${cmd}" title="${esc(help)}"${busy ? " disabled" : ""}>${busy && lchPending.cmd === cmd ? label + "\u2026" : label}</button>`;
+  return lchStep(s) + ndSection("NOW", now) +
+    ndSection(`SURVEY · averaged over about an hour · ${s.lchn || 0} heard lately · lower = clearer`, rows) +
+    `<p class="hint" style="margin:0">A network on an <b>overlapping</b> channel (7 next to 6) hurts the link most: the radio can't take turns with it, so frames get lost or stuck.
+      One on the <b>same</b> channel costs only the airtime it uses. Moving takes a few seconds; a node that misses the move finds the master on its own.
+      If you're on the master's Wi-Fi, your phone reconnects after a move.</p>
+    <div class="row" style="justify-content:space-between; flex-wrap:wrap; gap:8px">
+      <span class="row" style="gap:6px; flex-wrap:wrap">
+        ${btn("auto", "AUTOMATIC", auto, "Let the master pick, and move when another channel is clearly better")}
+        ${[1, 6, 11].map((c) => btn(String(c), `CH ${c}`, !auto && c === aim, `Stay on channel ${c} (turns automatic off)`)).join("")}
+        ${btn("survey", "SURVEY NOW", false, "Survey again now; in automatic mode, move if another channel is clearly better")}
+      </span>
+      <button class="btn" id="lchClose">CLOSE</button>
+    </div>`;
+}
+function renderLinkCh(s) {
+  const b = $("lchBtn");
+  if (b) {
+    b.textContent = `LINK CH ${s.lchto ? `${s.lch}→${s.lchto}` : s.lch || 6}${s.lchm === "fixed" ? " · FIXED" : ""}`;
+    b.classList.toggle("warn", !!s.lchto);
+  }
+  const dlg = $("lchDialog");
+  if (!dlg.open) return;
+  const h = lchHtml(s), body = $("lchBody");
+  if (body.dataset.html !== h) { body.innerHTML = h; body.dataset.html = h; }
+}
 // "This is mine": your own phone, watch and earbuds follow you everywhere. Kept in
 // this browser by address (fixed addresses) and for this session by device id.
 const mine = { macs: new Set(), ids: new Set() };
@@ -1582,6 +1974,17 @@ function handleLine(line) {
     case "sd_ls": renderSdFiles(msg); break;
     case "gps": renderGps(msg); break;
     case "ack":
+      if (msg.cmd === "linkch" && lchPending && !lchPending.acked) {
+        const p = lchPending;
+        p.acked = true;
+        p.moveTo = msg.moving || 0;
+        if (msg.ok === false) { p.text = `The master said no: ${msg.err || "bad request"}.`; p.done = Date.now(); }
+        else if (msg.moving) p.text = `Moving to channel ${msg.moving} in about 6 s. The nodes follow; cards may drop for a few seconds.`;
+        else if (/^\d+$/.test(p.cmd)) p.text = `Already on channel ${msg.ch}. Staying there (automatic is off).`;
+        else p.text = `${p.cmd === "auto" ? "Automatic is on. " : "Surveyed. "}Staying on channel ${msg.ch}: no channel is clearly better.`;
+        if (!msg.moving) p.done = Date.now();
+        if (state.status) renderLinkCh(state.status);
+      }
       if (msg.reboot) { state.rebooting = true; setLinkUi(true, "rebooting\u2026"); addEvent(0, `Board rebooting (${msg.cmd})`); }
       break;
     case "devs": state.lastDevs = Date.now(); state.devices = msg.d || []; renderDevices(); renderRadar(); renderDetails(); renderChannels(); break;
@@ -1591,6 +1994,9 @@ function handleLine(line) {
     case "query": onQuery(msg); break;
     case "info": if (msg.id === det.id) { det.info = msg; renderDetails(); } break;
     case "event": onEvent(msg); break;
+    case "linkch":
+      addEvent(1, `Cluster link moved from channel ${msg.from} to ${msg.to} (${msg.why === "manual" ? "you chose it" : "automatic: clearer channel"})`);
+      break;
     case "node":
       // Joins and losses only; a node says hello every time it checks back in.
       if (msg.event === "joined") addEvent(0, `Node ${msg.id} joined (${HW_NAMES[msg.hw] || "board"})`);
@@ -1683,7 +2089,7 @@ function floodIsRepeat(key) {
 // Rendering
 const ROLES = {
   standalone: { label: "STANDALONE", text: "This board does everything on its own: hops every channel, keeps the device list, feeds this page. Pick this for a single C5 dev board." },
-  master: { label: "MASTER", text: "Pairs with node boards over ESP-NOW, hands out the work, and merges what they hear into one list. Its own radio also listens, but stays on channel 6 so it can hear the nodes." },
+  master: { label: "MASTER", text: "Pairs with node boards over ESP-NOW, hands out the work, and merges what they hear into one list. Its own radio also listens, but stays on the link channel (6, 1 or 11) so it can hear the nodes." },
   node: { label: "NODE", text: "A sensor for a master: listens and reports everything it hears to the master. Connect this page to the master to see devices." },
 };
 
@@ -1703,8 +2109,8 @@ function renderStatus() {
     $("planPill").textContent = s.paired ? `paired · slot ${s.slot} · ${String(s.scan || "").toUpperCase()} · ch ${s.ch}` : "looking for a master…";
   } else if (role === "master") {
     const n = Array.isArray(s.nodes) ? s.nodes.filter((x) => x.online).length : 0;
-    $("planPill").textContent = `${(s.mode || "split").toUpperCase()} · ${n} node${n === 1 ? "" : "s"} online · own radio ${s.local === false ? "off" : "ch 6, BLE " + s.ble_duty + "%"}` + deployText(s);
-    $("planPill").title = `${(s.mode || "split") === "split" ? "SPLIT: the master shares the work out for the most coverage." : "MIRROR: every node runs the same plan, so signal strengths can be compared."} ${n} node${n === 1 ? " is" : "s are"} reporting. The master's own radio stays on Wi-Fi channel 6 (to hear the nodes) and scans Bluetooth ${s.ble_duty}% of the time.` + deployTitle(s);
+    $("planPill").textContent = `${(s.mode || "split").toUpperCase()} · ${n} node${n === 1 ? "" : "s"} online · own radio ${s.local === false ? "off" : "ch " + (s.lch || 6) + ", BLE " + s.ble_duty + "%"}` + deployText(s);
+    $("planPill").title = `${(s.mode || "split") === "split" ? "SPLIT: the master shares the work out for the most coverage." : "MIRROR: every node runs the same plan, so signal strengths can be compared."} ${n} node${n === 1 ? " is" : "s are"} reporting. The master's own radio stays on the link channel, ${s.lch || 6} (to hear the nodes), and scans Bluetooth ${s.ble_duty}% of the time.` + deployTitle(s);
   } else {
     const plan = s.channels ? `${s.channels} ch · BLE ${s.ble_duty}%`
       : s.ap?.on ? `Wi-Fi ch ${s.ch} only (access point) · BLE ${s.ble_duty}%` : `BLE ${s.ble_duty}% · Wi-Fi off`;
@@ -1718,7 +2124,7 @@ function renderStatus() {
 
   if (isNode) {
     $("nodeMac").textContent = s.mac || "";
-    $("nodeLink").textContent = s.paired ? `Paired with master ${s.core} as slot ${s.slot}` : "Looking for a master on channel 6…";
+    $("nodeLink").textContent = s.paired ? `Paired with master ${s.core} as slot ${s.slot}` : "Looking for a master on channels 1, 6 and 11…";
     $("nodeLink").className = s.paired ? "" : "hint";
     const classicLike = s.board === "classic" || s.board === "cyd";
     const radios = classicLike
@@ -1881,7 +2287,7 @@ function renderDeviceDialog() {
     $("wifiState").textContent = ap.on ? `· on · ${ap.open ? "open" : "password"} · ${ap.clients ?? 0} joined` : "· off";
     $("wifiCost").textContent = s.role === "standalone"
       ? "While it's on, this board's Wi-Fi scanning stays on one channel (an access point can't hop). BLE keeps scanning. Add a node for full Wi-Fi coverage."
-      : "The master already stays on channel 6, so this costs nothing.";
+      : `The master already stays on one channel (${s.lch || 6}), so this costs nothing.`;
   }
   $("loraOpts").hidden = !s.lora || !s.lora.ok || s.role === "node";
   if (!$("loraOpts").hidden && document.activeElement !== $("loraMode") && document.activeElement !== $("loraSlot")) {
@@ -2126,6 +2532,23 @@ function renderChannels() {
     Percent under a channel = the busiest a router there reports.` : "No routers heard yet.";
 }
 $("chanBtn").onclick = () => { $("chanDialog").showModal(); renderChannels(); };
+$("lchBtn").addEventListener("click", (e) => {
+  e.stopPropagation();   // not the cluster header's show / hide
+  $("lchBody").dataset.html = "";
+  $("lchDialog").showModal();
+  if (state.status) renderLinkCh(state.status);
+});
+$("lchBody").addEventListener("click", (e) => {
+  if (e.target.id === "lchClose") { $("lchDialog").close(); return; }
+  const b = e.target.closest("[data-lch]");
+  if (!b || b.disabled) return;
+  const cmd = b.dataset.lch;
+  lchPending = { cmd, at: Date.now(), text: cmd === "survey" ? "Asked the master to survey again\u2026"
+    : cmd === "auto" ? "Asked the master to go back to automatic\u2026" : `Asked the master to move to channel ${cmd}\u2026` };
+  state.link?.send(`linkch ${cmd}`);
+  if (state.status) renderLinkCh(state.status);
+  setTimeout(() => state.status && renderLinkCh(state.status), 10500);   // "no answer yet", if so
+});
 $("chanClose").onclick = () => $("chanDialog").close();
 
 // "+N networks": ask the board for the group, keep it fresh while the popup is open.
@@ -2959,7 +3382,7 @@ class A extends Error{constructor(A){super(A),this.name=new.target.name,Object.s
       box.hidden = false;
       box.style.display = "block";
       box.innerHTML = `<p class="hint" style="margin:0 0 6px">Latest builds (${esc(m.built || "")}):</p>` + m.builds.map((b, i) =>
-        `<div class="fwbuild"><div class="row" style="justify-content:space-between"><b>${esc(b.label)}</b>
+        `<div class="fwbuild"><div class="row" style="justify-content:space-between"><b>${esc(b.label)}${b.built ? ` <span class="hint" style="font-weight:normal">${esc((m.version ? m.version + " · " : "") + "built " + b.built)}</span>` : ""}</b>
           <span class="row"><button class="btn" data-fw="${i}" data-kind="app">UPDATE</button><button class="btn" data-fw="${i}" data-kind="factory">FRESH INSTALL</button></span></div>
           <details><summary>How to flash this one</summary><div class="fwguide" style="border:0; padding:6px 0 0">${guideHtml(b.env)}</div></details></div>`).join("") +
         `<p class="hint" style="margin:8px 0 6px">Or pick a file from your computer:</p>`;

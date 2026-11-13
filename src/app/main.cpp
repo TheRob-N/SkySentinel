@@ -76,6 +76,9 @@ extern "C" bool ssPsramTest(void) __asm__("esp_psram_extram_test");
 #ifdef SS_HAS_DISPLAY
 #include "node_display.h"  // the Heltec's little status screen, the T-Embed's screen and jog wheel
 #endif
+#include "ss_version.h"
+#include "ss_linkchan.h"
+#include "ss_subghz.h"
 #ifdef SS_SUBGHZ
 #include "subghz_node.h"  // T-Embed CC1101: sub-GHz band watch
 #endif
@@ -315,6 +318,33 @@ static String bootMemLog;   // free KB after each piece started at boot ("mem")
 // means missed answers. The longest pass since the last status, and a breakdown of any
 // pass over kSlowPassMs ("[master] slow pass").
 static constexpr uint32_t kSlowPassMs = 250;
+// Under a flood (a beacon / BLE spam tool next to the cluster) every fake is a new
+// device, and filing them stalled the master for ~1 s per pass: its queue from the
+// nodes overflowed (419 frames) and every node's loss spiked. Filing sightings now
+// gets this much of each pass; past it, sighting frames are skipped and counted, while
+// heartbeats and the rest are still handled, so the nodes keep the master.
+static constexpr uint32_t kIngestBudgetMs = 40;
+static uint32_t passStartMs = 0;
+static uint32_t shedFrames = 0, shedSightings = 0, shedLogged = 0, shedLogAt = 0;
+static inline bool overBudget() { return millis() - passStartMs > kIngestBudgetMs; }
+// Where the master's time on node frames goes, since the last status line (reported as
+// "rxt": receive+decrypt, heartbeats incl. their CONFIG / dashboard replies, sightings
+// filed, everything else; then frame counts for those three; then passes over budget).
+enum RxCost : uint8_t { RXC_POLL, RXC_HB, RXC_SIGHT, RXC_OTHER, RXC_COUNT };
+static uint32_t rxUs[RXC_COUNT], rxN[RXC_COUNT], rxOverBudget = 0;
+// Over budget, the ordinary sightings are skipped (they come round again in seconds);
+// these are always filed: strong matches, 50%+ confidence, sub-GHz bursts (often once).
+static inline bool mustFile(const Sighting& x) { return x.conf >= 50 || (x.flags & SF_STRONG_MATCH) || x.kind == KIND_SUBGHZ; }
+static size_t keepImportant(Sighting* x, size_t n) {
+  size_t k = 0;
+  for (size_t i = 0; i < n; ++i)
+    if (mustFile(x[i])) x[k++] = x[i];
+  shedSightings += n - k;
+  return k;
+}
+// Node: a full report buffer sends at once, but no more often than this (a flood
+// otherwise had every node sending non-stop). What doesn't fit is dropped and counted.
+static constexpr uint32_t kMinReportGapMs = 100;
 static uint32_t loopMaxMs = 0, slowPasses = 0;
 enum LoopPhase : uint8_t { LP_SERIAL, LP_WEB, LP_HITS, LP_RADIO, LP_REPORT, LP_MAINTAIN, LP_LOG, LP_OUTPUT, LP_COUNT };
 static const char* const kPhaseNames[LP_COUNT] = {"serial", "web", "hits", "radio", "ingest", "maintain", "log", "output"};
@@ -362,6 +392,8 @@ static constexpr uint32_t kRadioDeadMs = 90000;   // master / standalone: no Wi-
 RTC_NOINIT_ATTR static uint32_t rtcRestartTag;  // survives a software restart, not power loss
 RTC_NOINIT_ATTR static uint32_t rtcNoMasterRuns;  // quick no-master restarts in a row
 static uint32_t txWaitMax = 0;   // longest wait for the driver that did finish (status: tx_wait_max)
+RTC_NOINIT_ATTR static uint32_t rtcStuckMs;   // how long the frames were stuck before a stuck_tx restart
+static uint16_t lastStuckMs = 0;              // ... read back at boot (heartbeat: stuck_ms)
 static uint8_t bootWhy = RW_UNKNOWN;
 static uint16_t linkLosses = 0;
 static uint32_t lostSince = 0;
@@ -375,7 +407,10 @@ static uint8_t readResetWhy() {
              stuck = rtcRestartTag == kStuckTxRestartTag;
   rtcRestartTag = 0;
   if (r == ESP_RST_SW && radio) return RW_RADIO;
-  if (r == ESP_RST_SW && stuck) return RW_STUCK_TX;
+  if (r == ESP_RST_SW && stuck) {
+    lastStuckMs = (uint16_t)(rtcStuckMs > 0xFFFF ? 0xFFFF : rtcStuckMs);
+    return RW_STUCK_TX;
+  }
   switch (r) {
     case ESP_RST_POWERON: case ESP_RST_EXT: return RW_POWER;
     case ESP_RST_SW: return self ? RW_NO_MASTER : RW_SOFTWARE;
@@ -395,7 +430,28 @@ static uint8_t nodeSlot = 0xFF;
 static Config cfg;                         // current scan assignment
 static volatile uint16_t catMask = 0;      // read in radio callbacks
 static volatile int8_t rssiFloor = -95;
-static volatile uint8_t curChannel = kHomeChannel;
+// The cluster's link channel (ESP-NOW and the Wi-Fi page): 1, 6 or 11, saved as "lch".
+// The master can move it (automatically, or from the page); nodes follow, and a node that
+// lost the master looks for it on each in turn (ss_linkchan.h).
+static uint8_t homeChannel = kLinkChannelDefault;
+static uint8_t savedChannel = kLinkChannelDefault;
+static uint8_t moveTo = 0;          // a move in progress: to this channel ...
+static uint32_t moveAt = 0;         // ... at this time
+static uint32_t searchStep = 0, searchAt = 0;   // node looking for the master: which channel next
+static constexpr uint32_t kSearchDwellMs = 3000;     // listen this long on each channel
+static constexpr uint32_t kNodeMoveDelayMs = 4000;   // node: follow a move this long after hearing it
+static constexpr uint32_t kMasterMoveDelayMs = 6000; // master: tell everyone, then move
+static volatile uint8_t curChannel = kLinkChannelDefault;
+// Master: automatic (survey and move when another channel is clearly better) or fixed by hand
+static bool lchAuto = true;
+static LinkSurvey lchSurvey;               // latest survey (refreshed every minute)
+static LinkChooser lchChooser;             // averages the surveys, wants a streak, remembers measured loss
+static uint32_t lchSurveyAt = 0, lchDecideAt = 0, lchMovedAt = 0;
+static uint8_t lchFrom = 0;                // last move: from this channel ...
+static char lchWhy[8] = "";                // ... and why ("auto" / "manual")
+static constexpr uint32_t kLchFirstLookMs = 10 * 60 * 1000;   // auto: survey this long before the first move
+static constexpr uint32_t kLchDecideMs = 10 * 60 * 1000;      // ... then decide this often
+static constexpr uint32_t kLchHoldMs = 6UL * 60 * 60 * 1000;  // ... and move at most once in this long
 static uint8_t hopCursor = kChannelCount - 1;
 static volatile uint32_t wifiFrames = 0, bleAdvs = 0, queueDrops = 0;
 
@@ -462,6 +518,9 @@ static void enqueue(const Sighting& s, const char* name, uint8_t name_len, uint8
   if (name_len) memcpy(it.name, name, name_len);
   it.name[name_len] = '\0';
   if (xQueueSend(hitQueue, &it, 0) != pdTRUE) queueDrops = queueDrops + 1;
+#ifdef SS_DISPLAY_TEMBED
+  if (!note_only && kindIsBle(s.kind)) display::onSighting(s, it.name);   // HUNT: what this board hears itself
+#endif
 }
 
 #ifdef SS_LORA
@@ -651,9 +710,12 @@ static void bleStart() {
   if (NimBLEDevice::getScan()->isScanning()) bleMarkOn();
 }
 
+// HUNT on a Bluetooth device (T-Embed): listen full-time while it lasts, so its signal
+// strength updates with every advert it sends.
+static bool huntBleFull = false;
 static void applyBleDuty() {
   NimBLEScan* scan = NimBLEDevice::getScan();
-  const uint8_t duty = roleWantsBle() ? cfg.ble_duty_pct : 0;
+  const uint8_t duty = huntBleFull ? 100 : roleWantsBle() ? cfg.ble_duty_pct : 0;   // hunting: on whatever the job
   bleStop();
   if (duty == 0) return;
   // NimBLE takes milliseconds: 100 ms interval, window = duty share of it. On a C5 the
@@ -665,6 +727,7 @@ static void applyBleDuty() {
 #else
   uint16_t window = (uint16_t)((interval * duty) / 100);
   if (window < 10) window = 10;
+  if (window > interval) window = interval;
 #endif
   scan->setInterval(interval);
   scan->setWindow(window);
@@ -751,9 +814,9 @@ static void applyLocalPlan() {
 }
 
 static void goHome() {
-  if (curChannel != kHomeChannel) {
-    setRadioChannel(kHomeChannel);
-    curChannel = kHomeChannel;
+  if (curChannel != homeChannel) {
+    setRadioChannel(homeChannel);
+    curChannel = homeChannel;
   }
 }
 
@@ -773,6 +836,26 @@ static void setCats(uint16_t m) {
   prefs.putUShort("cats", userCats);
   if (runRole == RUN_MASTER) needAssign = true;
   applyLocalPlan();
+}
+
+// Moves this board's link to `ch` now (radio, and the Wi-Fi page's access point with it).
+static void applyLinkChannel(uint8_t ch, uint32_t now);
+
+
+static void saveLinkChannel(uint8_t ch) {
+  if (ch == savedChannel || !linkChannelValid(ch)) return;
+  savedChannel = ch;
+  prefs.putUChar("lch", ch);
+}
+
+
+// Node / unpaired board looking for the master: each link channel in turn, the last known first.
+static void searchLinkChannel(uint32_t now) {
+  if (searchAt && now - searchAt < kSearchDwellMs) return;
+  searchAt = now ? now : 1;
+  homeChannel = linkSearchChannel(savedChannel, searchStep++);
+  setRadioChannel(homeChannel);
+  curChannel = homeChannel;
 }
 
 // ---------------------------------------------------------------------------
@@ -829,6 +912,13 @@ static void sendHeartbeat() {
   hb.heap_min_kb = (uint16_t)(ESP.getMinFreeHeap() / 1024);
   hb.losses = linkLosses;
   hb.link = (espLink.lrCapable() ? HL_LR_CAPABLE : 0) | (paired && espLink.peerLongRange(coreMac) ? HL_LR_ON : 0);
+  hb.tx_wait_ms = (uint16_t)(txWaitMax > 0xFFFF ? 0xFFFF : txWaitMax);
+  hb.stuck_ms = lastStuckMs;
+  hb.release = ssReleaseCode();
+  hb.build = ssBuildStamp;
+#ifdef SS_DISPLAY_TEMBED
+  hb.wants = HBW_ALERTS;   // the ALERTS page
+#endif
   hb.gps = gpsState(millis());
 #ifdef SS_GPS
   hb.gps_sats = gps.sats();
@@ -902,6 +992,9 @@ static void nodeHandlePacket(const RxPacket& p) {
     }
     nodeSlot = w.node_index;
     lastCoreContact = millis();
+    saveLinkChannel(homeChannel);   // found it here: look here first next time
+    searchStep = 0;
+    searchAt = 0;
   } else if (h.type == MSG_COMMAND) {
     if (!paired || memcmp(coreMac, p.src, 6) != 0) return;
     NodeCommand c;
@@ -925,7 +1018,23 @@ static void nodeHandlePacket(const RxPacket& p) {
     } else if (c.cmd == NC_UNPAIR) {
       Out.println("[node] the master forgot this node");
       unpairAndRestart();
+    } else if (c.cmd == NC_CHANNEL) {   // repeated for a while: act on the first
+      if (linkChannelValid(c.arg) && c.arg != homeChannel && c.arg != moveTo) {
+        moveTo = c.arg;
+        moveAt = millis() + kNodeMoveDelayMs;
+        Out.printf("[node] the cluster is moving to channel %u, following in %lu s\n", c.arg, (unsigned long)(kNodeMoveDelayMs / 1000));
+      }
     }
+#ifdef SS_DISPLAY_TEMBED
+  } else if (h.type == MSG_DASH) {   // the ALERTS page: the cluster's summary and latest alert
+    if (!paired || memcmp(coreMac, p.src, 6) != 0) return;
+    static Dash d;
+    if (decodeDash(pl, n, d)) display::onDash(d);
+  } else if (h.type == MSG_DASH_VIEW) {   // ... and its recent events
+    if (!paired || memcmp(coreMac, p.src, 6) != 0 || dashViewOf(pl, n) != DV_EVENTS) return;
+    static DashEvents e;
+    if (decodeDashEvents(pl, n, e)) display::onEvents(e);
+#endif
   } else if (h.type == MSG_CONFIG) {
     if (!paired || memcmp(coreMac, p.src, 6) != 0) return;
     Config c;
@@ -965,7 +1074,117 @@ static void sendPending(int slot) {
   else pendingUntil[slot] = 0;
 }
 
+// One line per sub-GHz burst (fob press, sensor, remote), page or not, so a logger's
+// master.log keeps a timeline of them: {"t":"burst","node":"FA6C","mhz":915.00,"rssi":-66,"n":1}.
+// The device list only holds one row per band; this is every time it went off.
+static void logBursts(const Sighting* s, size_t n, uint16_t node_id) {
+  if (!g_jsonOn) return;
+  for (size_t i = 0; i < n; ++i) {
+    if (s[i].kind != KIND_SUBGHZ) continue;
+    const uint32_t khz = subGhzKhz(s[i].addr);
+    if (!khz) continue;
+    Out.printf("{\"t\":\"burst\",\"node\":\"%04X\",\"mhz\":%lu.%02lu,\"rssi\":%d,\"n\":%u}\n", node_id,
+               (unsigned long)(khz / 1000), (unsigned long)((khz % 1000) / 10), s[i].rssi_max, s[i].hits ? s[i].hits : 1);
+  }
+}
+
+// Link channel, master side. The survey: every Wi-Fi router and device the cluster heard
+// on 2.4 GHz in the last 15 minutes, weighed by how much each would disturb the link
+// on 1, 6 and 11 (ss_linkchan.h). The cluster's own radios aren't in the table.
+static void surveyLink(uint32_t now) {
+  LinkSurvey s;
+  if (table) {
+    table->forEach([&](const Device& d) {
+      if (!kindIsWifi(d.kind) || d.channel < 1 || d.channel > 13 || now - d.last_ms > 15UL * 60 * 1000) return;
+      if (d.alias_of || d.spoofed) return;   // one router's other networks share its radio; fakes aren't real radios
+      ChanHeard h;
+      h.channel = d.channel;
+      int8_t best = -127;   // the board that hears it best lately (others may catch a weak copy next door)
+      h.rssi = bestNode(d, now, 10UL * 60 * 1000, &best) >= 0 ? best : d.rssi_last;
+      h.ap = d.ap_sec != 0 || d.kind == KIND_WIFI_BEACON;
+      h.util = d.ap_util;
+      s.add(h);
+    });
+  }
+  lchSurvey = s;
+  lchChooser.survey(s);
+  lchSurveyAt = now ? now : 1;
+}
+
+// The link's loss lately, averaged over the nodes online (tenths of a percent)
+static uint16_t linkLossLately(uint32_t now) {
+  uint32_t sum = 0, n = 0;
+  for (int i = 0; i < kMaxNodes; ++i) {
+    const NodeInfo& x = nodes.at(i);
+    uint16_t pm; uint32_t span;
+    if (x.used && x.online && x.loss.over(now, 600000, x.frames, x.lost, pm, span)) { sum += pm; ++n; }
+  }
+  return n ? (uint16_t)(sum / n) : 0;
+}
+
+// Tell every node, then move ourselves a few seconds later. A node that misses it loses
+// the master, looks on each channel and finds it there.
+static void startLinkMove(uint8_t to, const char* why, uint32_t now) {
+  if (!linkChannelValid(to) || to == homeChannel) return;
+  strncpy(lchWhy, why, sizeof(lchWhy) - 1);
+  lchWhy[sizeof(lchWhy) - 1] = 0;
+  NodeCommand c;
+  c.cmd = NC_CHANNEL;
+  c.arg = to;
+  for (int i = 0; i < kMaxNodes; ++i)
+    if (nodes.at(i).used && nodes.at(i).online) queueCommand(i, c);
+  moveTo = to;
+  moveAt = now + kMasterMoveDelayMs;
+  Out.printf("[link] moving the cluster from channel %u to %u (%s) in %lu s\n", homeChannel, to, why,
+             (unsigned long)(kMasterMoveDelayMs / 1000));
+}
+
+// Every 10 minutes: note the link's loss on this channel (once it has been here 10
+// minutes, so the window is all this channel), and in automatic mode decide. `force`
+// (SURVEY NOW on the page) skips the waits and the streak.
+static void linkDecide(uint32_t now, bool force) {
+  if (force) surveyLink(now);
+  lchDecideAt = now ? now : 1;
+  const uint16_t loss = linkLossLately(now);
+  if (!force && (!lchMovedAt || now - lchMovedAt >= kLchDecideMs)) lchChooser.noteLoss(homeChannel, loss);
+  if (!lchAuto || moveTo) return;
+  if (!force && lchMovedAt && now - lchMovedAt < kLchHoldMs) return;
+  const uint8_t to = lchChooser.decide(homeChannel, loss, force);
+  if (to) startLinkMove(to, "auto", now);
+}
+
+static void linkTick(uint32_t now) {
+  if (moveTo && (int32_t)(now - moveAt) >= 0) applyLinkChannel(moveTo, now);
+  if (!lchSurveyAt || now - lchSurveyAt >= 60000) surveyLink(now);
+  if (now >= kLchFirstLookMs && (!lchDecideAt || now - lchDecideAt >= kLchDecideMs)) linkDecide(now, false);
+}
+
 static DashAlerts dashAlerts;
+
+static void applyLinkChannel(uint8_t ch, uint32_t now) {
+  const uint8_t from = homeChannel;
+  homeChannel = ch;
+  saveLinkChannel(ch);
+  if (apActive) {   // the Wi-Fi page's access point moves too (connected phones reconnect)
+    wifi_config_t ap = {};
+    if (esp_wifi_get_config(WIFI_IF_AP, &ap) == ESP_OK) {
+      ap.ap.channel = ch;
+      esp_wifi_set_config(WIFI_IF_AP, &ap);
+    }
+  }
+  setRadioChannel(ch);
+  curChannel = ch;
+  moveTo = 0;
+  Out.printf("[link] now on channel %u (was %u)\n", ch, from);
+  if (runRole == RUN_MASTER) {
+    lchMovedAt = now ? now : 1;
+    lchFrom = from;
+    char t[kDashAlertText + 1];
+    snprintf(t, sizeof(t), "Link moved to ch %u", ch);
+    dashAlerts.note(0, CAT_NONE, t, now);
+    if (g_jsonOn) Out.printf("{\"t\":\"linkch\",\"from\":%u,\"to\":%u,\"why\":\"%s\"}\n", from, ch, lchWhy);
+  }
+}
 // Latest GPS details from each GPS node (MSG_GPS), for "gps <ID>" / the web page's GPS window
 static GpsInfo gpsInfo[kMaxNodes];
 static uint32_t gpsInfoMs[kMaxNodes] = {0};
@@ -1209,9 +1428,13 @@ static void sendLogRecord(const LogRec& r) {
 
 // Dashboard nodes (CYD) get the summary right after each CONFIG, which they're
 // listening for anyway. They check in every second, so it's about 1 Hz.
+// Nodes that only want the alerts (HBW_ALERTS in their heartbeat: the T-Embed's ALERTS
+// page) get the same summary plus the recent events, at their own report rate.
 static void sendDash(int slot) {
   const NodeInfo& n = nodes.at(slot);
-  if (!table || !(n.caps & CAP_DASH)) return;
+  const bool alertsOnly = !(n.caps & CAP_DASH) && (n.hb.wants & HBW_ALERTS);
+  if (!table || (!(n.caps & CAP_DASH) && !alertsOnly)) return;
+  if (alertsOnly) dashView[slot] = DashViewState{DV_EVENTS, 0, 0};
   const uint32_t now = millis();
   Dash d;
   buildDash(*table, now, userCats, d);
@@ -1445,7 +1668,12 @@ static void masterHandlePacket(const RxPacket& p, uint32_t now) {
       Sighting s[kMaxSightingsPerFrame];
       size_t count = 0;
       if (!decodeSightings(pl, n, s, kMaxSightingsPerFrame, &count)) { ++badFrames; return; }
+      if (overBudget()) {   // a flood (or the first minutes after a start): keep up with the nodes
+        ++shedFrames;
+        count = keepImportant(s, count);
+      }
       ingestSightings(*table, (uint8_t)slot, s, count, now);
+      logBursts(s, count, nodes.at(slot).id);
       break;
     }
     case MSG_NAME: {
@@ -1499,7 +1727,9 @@ static void flushReports(uint32_t now) {
     const uint8_t slot = runRole == RUN_MASTER ? kLocalSlot : 0;
     while (batch.size()) {
       const size_t n = batch.take(out, kMaxSightingsPerFrame, now);
-      ingestSightings(*table, slot, out, n, now);
+      const size_t k = runRole == RUN_MASTER && overBudget() ? keepImportant(out, n) : n;   // a flood: the nodes come first
+      ingestSightings(*table, slot, out, k, now);
+      logBursts(out, k, myId);
     }
     for (uint8_t i = 0; i < nPendingNames; ++i) applyName(*table, pendingNames[i], now);
     if (fire) emitEvent(ev, runRole == RUN_MASTER ? kLocalSlot : -1);
@@ -1526,6 +1756,33 @@ static void emitStatus(uint32_t now) {
   Out.printf("{\"t\":\"status\",\"role\":\"%s\",\"setup\":%s,\"fw\":%u,\"hw\":%u,\"mac\":",
                 runRoleName(runRole), setupDone ? "true" : "false", SS_FW_VERSION, (unsigned)SS_HW_TYPE);
   jsonMac(myMac);
+  Out.printf(",\"rel\":\"%s\",\"bld\":%lu", SS_RELEASE, (unsigned long)ssBuildStamp);   // which build this is
+  if (shedFrames || shedSightings) Out.printf(",\"shed\":%lu,\"shedn\":%lu", (unsigned long)shedFrames, (unsigned long)shedSightings);
+  if (runRole == RUN_MASTER) {
+    Out.printf(",\"rxt\":[%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu]", (unsigned long)(rxUs[RXC_POLL] / 1000), (unsigned long)(rxUs[RXC_HB] / 1000),
+               (unsigned long)(rxUs[RXC_SIGHT] / 1000), (unsigned long)(rxUs[RXC_OTHER] / 1000), (unsigned long)rxN[RXC_HB],
+               (unsigned long)rxN[RXC_SIGHT], (unsigned long)rxN[RXC_OTHER], (unsigned long)rxOverBudget);
+    for (auto& x : rxUs) x = 0;
+    for (auto& x : rxN) x = 0;
+    rxOverBudget = 0;
+  }
+  Out.printf(",\"lch\":%u,\"lchm\":\"%s\"", homeChannel, lchAuto ? "auto" : "fixed");   // link channel
+  if (runRole == RUN_MASTER) {
+    const float* avg = lchChooser.avgCost();   // what decisions use: about an hour's average
+    Out.printf(",\"lchc\":[%u,%u,%u],\"lchr\":[%u,%u,%u],\"lchn\":%u", (unsigned)(avg[0] + 0.5f), (unsigned)(avg[1] + 0.5f),
+               (unsigned)(avg[2] + 0.5f), (unsigned)(lchSurvey.cost[0] + 0.5f), (unsigned)(lchSurvey.cost[1] + 0.5f),
+               (unsigned)(lchSurvey.cost[2] + 0.5f), lchSurvey.heard);
+    Out.printf(",\"lchl\":[%d,%d,%d]", lchChooser.measuredLoss(1), lchChooser.measuredLoss(6), lchChooser.measuredLoss(11));
+    if (lchChooser.streakChannel()) Out.printf(",\"lchs\":[%u,%u,%u]", lchChooser.streakChannel(), lchChooser.streak(), LinkChooser::kStreak);
+    if (lchChooser.vetoed()) Out.printf(",\"lchv\":%u", lchChooser.vetoed());
+    if (moveTo) Out.printf(",\"lchto\":%u", moveTo);
+    if (lchMovedAt) Out.printf(",\"lchmv\":%lu,\"lchfrom\":%u,\"lchwhy\":\"%s\"", (unsigned long)((now - lchMovedAt) / 1000), lchFrom, lchWhy);
+    if (lchAuto) {
+      const uint32_t next = now < kLchFirstLookMs ? kLchFirstLookMs - now
+                            : (lchDecideAt ? (now - lchDecideAt < kLchDecideMs ? kLchDecideMs - (now - lchDecideAt) : 0) : 0);
+      Out.printf(",\"lchnext\":%lu", (unsigned long)(next / 1000));
+    }
+  }
   Out.printf(",\"ascan\":%s", activeScan ? "true" : "false");
   Out.printf(",\"rst\":\"%s\",\"heap\":%lu,\"heapmin\":%lu,\"losses\":%u", resetWhyName(bootWhy),
              (unsigned long)(ESP.getFreeHeap() / 1024), (unsigned long)(ESP.getMinFreeHeap() / 1024), linkLosses);
@@ -1606,6 +1863,17 @@ static void emitStatus(uint32_t now) {
                    n.hb.heap_min_kb, n.hb.losses);
       if (n.hb.sd) Out.printf(",\"sd\":\"%s\"", sdStateName(n.hb.sd));
       Out.printf(",\"lr\":%u", n.hb.link);
+      Out.printf(",\"txw\":%u,\"stk\":%u", n.hb.tx_wait_ms, n.hb.stuck_ms);   // driver: longest wait, last stuck
+      if (n.hb.release)
+        Out.printf(",\"rel\":\"%u.%u.%u\",\"bld\":%lu", n.hb.release >> 10, (n.hb.release >> 5) & 31, n.hb.release & 31,
+                   (unsigned long)n.hb.build);
+      {  // recent link loss, tenths of a percent, and the seconds of history behind each
+        uint16_t pm; uint32_t span;
+        if (n.loss.over(now, 600000, n.frames, n.lost, pm, span))
+          Out.printf(",\"l10\":%u,\"l10s\":%lu", pm, (unsigned long)(span / 1000));
+        if (n.loss.over(now, 3600000, n.frames, n.lost, pm, span))
+          Out.printf(",\"l60\":%u,\"l60s\":%lu", pm, (unsigned long)(span / 1000));
+      }
       Out.printf(",\"force\":\"%s\",\"screen\":%d", roleName(n.force_role), n.screen);
       Out.printf(",\"lmd\":\"%s\"", n.link_mode == 0 ? "normal" : n.link_mode == 1 ? "lr250" : n.link_mode == 2 ? "lr500" : "auto");
       if (n.caps & CAP_LORA_915) Out.printf(",\"lmode\":\"%s\",\"lslot\":%u", loraModeName(n.lora_mode), n.lora_slot);
@@ -1780,8 +2048,8 @@ static void bleTestPark(bool capture) {
   esp_wifi_set_band_mode(WIFI_BAND_MODE_AUTO);
 #endif
   esp_wifi_set_promiscuous(capture);
-  setRadioChannel(kHomeChannel);
-  curChannel = kHomeChannel;
+  setRadioChannel(homeChannel);
+  curChannel = homeChannel;
 }
 
 static void runBleTest() {
@@ -1951,6 +2219,29 @@ static void handleLine(String line, uint32_t now) {
     }
     emitGpsInfo(id, gpsInfo[slot], now - gpsInfoMs[slot]);
   } else if (logger::handleCommand(line)) {
+  } else if (runRole == RUN_MASTER && line.startsWith("linkch")) {
+    // linkch auto | linkch survey | linkch 1|6|11 (the page's LINK CHANNEL window)
+    const String arg = line.substring(6);
+    String a = arg; a.trim();
+    if (a == "auto") {
+      lchAuto = true;
+      prefs.putUChar("lchm", 0);
+      linkDecide(now, true);
+    } else if (a == "survey") {
+      linkDecide(now, true);
+    } else {
+      const int ch = a.toInt();
+      if (!linkChannelValid(ch)) {
+        Out.println("{\"t\":\"ack\",\"cmd\":\"linkch\",\"ok\":false,\"err\":\"use auto, survey, 1, 6 or 11\"}");
+        return;
+      }
+      lchAuto = false;
+      prefs.putUChar("lchm", 1);
+      surveyLink(now);
+      startLinkMove((uint8_t)ch, "manual", now);
+    }
+    Out.printf("{\"t\":\"ack\",\"cmd\":\"linkch\",\"ok\":true,\"ch\":%u,\"auto\":%s,\"moving\":%u}\n", homeChannel,
+               lchAuto ? "true" : "false", moveTo);
   } else if (line == "status") {
     const bool j = g_jsonOn;
     g_jsonOn = true;
@@ -2254,6 +2545,10 @@ void setup() {
   linkLr = prefs.getBool("linklr", false);
   espLink.setLrFast(prefs.getBool("lrfast", true));   // 500 kbit/s unless chosen otherwise (see README, Long Range)
   lrRemembered = prefs.getBool("lrlink", false);      // node: last told to use LR (calls in both modes)
+  savedChannel = prefs.getUChar("lch", kLinkChannelDefault);
+  if (!linkChannelValid(savedChannel)) savedChannel = kLinkChannelDefault;
+  homeChannel = curChannel = savedChannel;
+  lchAuto = prefs.getUChar("lchm", 0) == 0;
   localScreen = prefs.isKey("screen") ? prefs.getBool("screen", true) : true;
   {
     // Default: the V8 (battery, GPS) is usually carried; dev boards usually sit still.
@@ -2292,9 +2587,9 @@ void setup() {
   apActive = apOn && runRole != RUN_NODE;
   if (apActive) {
     WiFi.mode(WIFI_AP_STA);  // AP for the phone; the STA side stays idle (ESP-NOW rides on it)
-    if (portal::begin(apName.c_str(), apPass.c_str(), kHomeChannel, [](const String& l) { handleLine(l, millis()); })) {
+    if (portal::begin(apName.c_str(), apPass.c_str(), homeChannel, [](const String& l) { handleLine(l, millis()); })) {
       Out.printf("[wifi] access point \"%s\" (%s) on channel %u, page at http://%s/\n", apName.c_str(),
-                 apPass.length() ? "password" : "open", kHomeChannel, WiFi.softAPIP().toString().c_str());
+                 apPass.length() ? "password" : "open", homeChannel, WiFi.softAPIP().toString().c_str());
     } else {
       Out.println("[wifi] access point FAILED to start");
       apActive = false;
@@ -2303,9 +2598,9 @@ void setup() {
 
   if (runRole == RUN_STANDALONE) {
     esp_wifi_set_ps(WIFI_PS_NONE);
-    setRadioChannel(kHomeChannel);
+    setRadioChannel(homeChannel);
   } else {
-    if (!espLink.begin(clusterKey.c_str(), kHomeChannel)) Out.println("[link] ESP-NOW init FAILED");
+    if (!espLink.begin(clusterKey.c_str(), homeChannel)) Out.println("[link] ESP-NOW init FAILED");
     bootHeap("esp-now");
     if (runRole == RUN_NODE && corePinned && !unpaired) espLink.addPeer(pinnedCore);
     masterPair.begin(&espLink, myId);
@@ -2430,7 +2725,7 @@ static void startPromisc() {
 // On a Long Range link at the edge of range (-88 to -94 dBm, Nov 9) the driver retries a
 // frame many times at the slowest rate, and 1.5 s restarted a working node every minute or
 // two. Long Range gets 5 s, like the classic boards; the normal link keeps 1.5 s.
-static constexpr uint32_t kTxStuckMs = 1500;
+static constexpr uint32_t kTxStuckMs = 3000;   // was 1.5 s: a Heltec doing LoRa + GPS + BLE tripped it ~4x a night
 static constexpr uint32_t kTxStuckLrMs = 5000;
 static void checkStuckTx(uint32_t now) {
   static uint32_t since = 0;
@@ -2446,6 +2741,7 @@ static void checkStuckTx(uint32_t now) {
              (unsigned long)espLink.inFlight(), (unsigned long)(now - since),
              lr ? "on" : "off", masterRssi, (unsigned long)(ESP.getFreeHeap() / 1024));
   rtcRestartTag = kStuckTxRestartTag;
+  rtcStuckMs = now - since;
   Serial.flush();
   delay(100);
   ESP.restart();
@@ -2476,7 +2772,7 @@ static bool bleShare(uint32_t now, uint64_t chans) {
     if (saidDuty != duty) {
       saidDuty = duty;
       Out.printf("[ble] sharing the radio: Bluetooth full-time for %lu ms of each %lu s on ch %u, Wi-Fi %s the rest\n",
-                 (unsigned long)park, (unsigned long)(kCycleMs / 1000), kHomeChannel,
+                 (unsigned long)park, (unsigned long)(kCycleMs / 1000), homeChannel,
                  chans && channelCount(chans) > 1 ? "hops" : "has the radio");
     }
     if (now - cycleStart < park) {
@@ -2565,11 +2861,13 @@ static void loopNode(uint32_t now) {
     if (nodePair.done()) {
       prefs.putString("key", nodePair.key());
       prefs.putBytes("core", nodePair.master(), 6);
+      prefs.putUChar("lch", homeChannel);   // the master's channel
       Out.println("[pair] key saved, restarting into the cluster");
       Serial.flush();
       delay(200);
       ESP.restart();
     }
+    if (!nodePair.hasOffer(now) && !nodePair.blinking(now)) searchLinkChannel(now);   // stay put once a master answers
     goHome();
     static uint32_t lastAsk = 0;
     if (now - lastAsk >= 1500) { lastAsk = now; talkToMaster(&pairRequestNow, 300); }
@@ -2587,6 +2885,10 @@ static void loopNode(uint32_t now) {
     Serial.flush();
     delay(100);
     ESP.restart();
+  }
+  if (moveTo && (int32_t)(now - moveAt) >= 0) {   // the cluster is moving: follow
+    applyLinkChannel(moveTo, now);
+    lastCoreContact = now;   // give the master a moment to arrive
   }
   // Signed: a packet handled during this pass can set lastCoreContact a little after `now`.
   if (paired && (int32_t)(now - lastCoreContact) > (int32_t)kCoreLostMs) {
@@ -2639,9 +2941,9 @@ static void loopNode(uint32_t now) {
       delay(100);
       ESP.restart();
     }
-    // Make sure the radio really is on the home channel (not just our idea of it).
-    static uint32_t lastForce = 0;
-    if (now - lastForce > 10000) { lastForce = now; setRadioChannel(kHomeChannel); curChannel = kHomeChannel; }
+    // Look for it on each link channel in turn (it may have moved), setting the radio
+    // each time (not just our idea of it).
+    searchLinkChannel(now);
     goHome();
     if (now - lastHello >= kHelloEveryMs) { lastHello = now; talkToMaster(&sendHello, kHelloListenMs); }
     batch.clear();  // nothing to report to yet
@@ -2664,7 +2966,7 @@ static void loopNode(uint32_t now) {
       }
     }
   }
-  if (now - lastReport >= cfg.report_ms || batch.full()) {
+  if (now - lastReport >= cfg.report_ms || (batch.full() && now - lastReport >= kMinReportGapMs)) {
     goHome();
     const uint32_t every = cfg.cfg_version ? kHeartbeatEveryMs : kUnconfiguredBeatMs;
     talkToMaster(&flushAndBeat, now - lastHeartbeat >= every ? kBeatListenMs : kListenWindowMs);
@@ -2676,13 +2978,39 @@ static void loopNode(uint32_t now) {
 }
 
 static void loopTable(uint32_t now) {
-  phaseMark = millis();
+  phaseMark = passStartMs = millis();
   if (runRole == RUN_MASTER) {
     RxPacket p;
-    for (int i = 0; i < 16 && espLink.poll(p); ++i) masterHandlePacket(p, now);
+    // Up to 16 a pass normally; while shedding a flood (cheap) drain more, so the queue
+    // from the nodes doesn't overflow.
+    bool wasOver = false;
+    for (int i = 0; i < 64; ++i) {
+      if (i >= 16 && !overBudget()) break;
+      const uint32_t t0 = micros();
+      if (!espLink.poll(p)) { rxUs[RXC_POLL] += micros() - t0; break; }
+      const uint32_t t1 = micros();
+      rxUs[RXC_POLL] += t1 - t0;
+      Header hh;
+      const uint8_t* hp;
+      size_t hn;
+      const uint8_t ty = decodeFrame(p.data, p.len, hh, &hp, &hn) ? hh.type : 0;
+      masterHandlePacket(p, now);
+      const RxCost c = ty == MSG_HEARTBEAT ? RXC_HB : ty == MSG_SIGHTINGS ? RXC_SIGHT : RXC_OTHER;
+      rxUs[c] += micros() - t1;
+      ++rxN[c];
+      if (!wasOver && overBudget()) { wasOver = true; ++rxOverBudget; }
+    }
+    if (shedSightings != shedLogged && now - shedLogAt >= 10000) {
+      Out.printf("[master] flood: skipped %lu sighting frames (%lu sightings) so far to keep up with the nodes\n",
+                 (unsigned long)shedFrames, (unsigned long)shedSightings);
+      shedLogged = shedSightings;
+      shedLogAt = now;
+    }
     masterPair.poll(now, clusterKey.c_str());
     bool wasOnline[kMaxNodes];
     for (int i = 0; i < kMaxNodes; ++i) wasOnline[i] = nodes.at(i).used && nodes.at(i).online;
+    nodes.sampleLoss(now);
+    linkTick(now);
     if (nodes.expire(now, kNodeTimeoutMs)) {
       needAssign = true;
       for (int i = 0; i < kMaxNodes; ++i) {
@@ -2701,7 +3029,7 @@ static void loopTable(uint32_t now) {
     xferTick(now);
   }
   phaseEnd(LP_RADIO);
-  if (now - lastReport >= cfg.report_ms || batch.full()) {
+  if (now - lastReport >= cfg.report_ms || (batch.full() && now - lastReport >= kMinReportGapMs)) {
     flushReports(now);
     lastReport = now;
   }
@@ -2737,6 +3065,10 @@ void loop() {
   bleMinuteTick(now);
 #ifdef SS_DISPLAY_TEMBED
   display::tick(now);   // jog wheel and buttons: page flips feel instant
+  if (display::huntBle() != huntBleFull) {   // HUNT on a Bluetooth device started / stopped
+    huntBleFull = display::huntBle();
+    applyBleDuty();
+  }
 #endif
 #ifdef SS_SUBGHZ
   {  // sub-GHz bursts go to the device list as one row per band (Sub-GHz category)

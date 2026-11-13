@@ -971,6 +971,11 @@ Sighting makeWifiSighting(const WifiFrame& f, const Match& m, uint8_t channel, i
   Sighting s;
   memcpy(s.addr, f.addr2, 6);
   s.kind = f.kind;
+  // A router's beacon (and probe answer) says which channel it's really on. A strong one
+  // is also heard on the channels next to it, so the channel we were tuned to can be off
+  // by a few (seen: a hotspot on 7 filed under 9).
+  if ((f.kind == KIND_WIFI_BEACON || f.kind == KIND_WIFI_PROBE_RESP) && f.ds_channel && channelIndex(f.ds_channel) >= 0)
+    channel = f.ds_channel;
   s.channel = channel;
   s.rssi_max = s.rssi_last = rssi;
   s.hits = 1;

@@ -1,5 +1,7 @@
 #include "ss_devices.h"
 
+#include <new>
+
 #include <string.h>
 
 #include "ss_classify.h"
@@ -22,6 +24,49 @@ bool isSpoofableSig(uint16_t sig_id) {
 DeviceTable::DeviceTable(Device* storage, size_t capacity, StitchPolicy policy, SpamPolicy spam)
     : dev_(storage), cap_(capacity), pol_(policy), spam_pol_(spam) {
   for (size_t i = 0; i < cap_; ++i) dev_[i] = Device();
+  if (cap_ && cap_ < 0xFFFF) {
+    size_t n = 16;
+    while (n < cap_ * 2) n <<= 1;   // at most half full
+    idx_ = new (std::nothrow) uint16_t[n];
+    if (idx_) {
+      for (size_t i = 0; i < n; ++i) idx_[i] = 0;
+      idx_mask_ = n - 1;
+    }
+  }
+}
+
+size_t DeviceTable::idxHome(const uint8_t a[6], uint8_t radio) const {
+  uint32_t h = 2166136261u ^ radio;
+  for (int i = 0; i < 6; ++i) h = (h ^ a[i]) * 16777619u;
+  return h & idx_mask_;
+}
+
+void DeviceTable::idxInsert(size_t slot) {
+  ++used_n_;
+  if (!idx_) return;
+  size_t i = idxHome(dev_[slot].addr, dev_[slot].radio);
+  while (idx_[i]) i = (i + 1) & idx_mask_;
+  idx_[i] = (uint16_t)(slot + 1);
+}
+
+void DeviceTable::idxRemove(size_t slot) {
+  if (used_n_) --used_n_;
+  if (!idx_) return;
+  size_t i = idxHome(dev_[slot].addr, dev_[slot].radio);
+  while (idx_[i] && idx_[i] != slot + 1) i = (i + 1) & idx_mask_;
+  if (!idx_[i]) return;   // wasn't there
+  // Backward-shift deletion: pull later entries of the run into the gap if their home
+  // position allows it, so probes never stop early at a hole.
+  size_t gap = i;
+  for (size_t j = (i + 1) & idx_mask_; idx_[j]; j = (j + 1) & idx_mask_) {
+    const size_t home = idxHome(dev_[idx_[j] - 1].addr, dev_[idx_[j] - 1].radio);
+    // Move j into gap unless its home lies cyclically in (gap, j]
+    const bool stays = gap <= j ? (home > gap && home <= j) : (home > gap || home <= j);
+    if (stays) continue;
+    idx_[gap] = idx_[j];
+    gap = j;
+  }
+  idx_[gap] = 0;
 }
 
 void DeviceTable::addClusterMac(const uint8_t mac[6]) {
@@ -41,6 +86,13 @@ bool DeviceTable::isClusterMac(const uint8_t mac[6]) const {
 }
 
 Device* DeviceTable::find(const uint8_t addr[6], uint8_t radio) {
+  if (idx_) {
+    for (size_t i = idxHome(addr, radio); idx_[i]; i = (i + 1) & idx_mask_) {
+      Device& d = dev_[idx_[i] - 1];
+      if (d.used && d.radio == radio && memcmp(d.addr, addr, 6) == 0) return &d;
+    }
+    return nullptr;
+  }
   for (size_t i = 0; i < cap_; ++i)
     if (dev_[i].used && dev_[i].radio == radio && memcmp(dev_[i].addr, addr, 6) == 0) return &dev_[i];
   return nullptr;
@@ -53,21 +105,54 @@ Device* DeviceTable::byId(uint32_t id) {
 }
 
 Device* DeviceTable::alloc(uint32_t now_ms) {
-  // Full: drop the stalest fake (spam) entry first, so a flood can't push real devices out.
-  Device* lru = nullptr;
-  Device* fake = nullptr;
-  for (size_t i = 0; i < cap_; ++i) {
-    if (!dev_[i].used) return &dev_[i];
-    if (!lru || dev_[i].last_ms < lru->last_ms) lru = &dev_[i];
-    if (dev_[i].spoofed && (!fake || dev_[i].last_ms < fake->last_ms)) fake = &dev_[i];
-  }
   (void)now_ms;
-  if (fake) lru = fake;
-  if (lru) retire(*lru);  // evict the least recently seen; session totals keep it
-  return lru;
+  while (n_free_) {   // freed earlier (batch eviction, stitch)
+    Device& d = dev_[free_[--n_free_]];
+    if (!d.used) return &d;
+  }
+  if (used_n_ < cap_) {   // still filling: look on from where the last one was found
+    for (size_t k = 0; k < cap_; ++k) {
+      const size_t i = (hint_ + k) % cap_;
+      if (!dev_[i].used) { hint_ = (i + 1) % cap_; return &dev_[i]; }
+    }
+  }
+  // Full: evict the stalest, fakes (spam) first so a flood can't push real devices out.
+  // One pass picks a batch (1/64 of the table, at least 1), so a flood of new devices
+  // costs one walk per batch instead of one per device.
+  size_t want = cap_ / 64;
+  if (want < 1) want = 1;
+  if (want > kFreeMax) want = kFreeMax;
+  uint16_t pick[kFreeMax];
+  size_t np = 0;
+  auto older = [&](size_t a, size_t b) {   // a should go before b
+    if (dev_[a].spoofed != dev_[b].spoofed) return dev_[a].spoofed;
+    return dev_[a].last_ms < dev_[b].last_ms;
+  };
+  for (size_t i = 0; i < cap_; ++i) {
+    if (!dev_[i].used) { pick[0] = (uint16_t)i; np = 1; want = 1; break; }   // one turned up after all
+    if (np < want) { pick[np++] = (uint16_t)i; }
+    else {
+      size_t worst = 0;   // the newest of the picks: replace it if this one is older
+      for (size_t k = 1; k < np; ++k) if (older(pick[worst], pick[k])) worst = k;
+      if (older(i, pick[worst])) pick[worst] = (uint16_t)i;
+    }
+  }
+  if (!np) return nullptr;
+  // Hand out the oldest now, keep the rest on hand (session totals keep what's evicted)
+  size_t first = 0;
+  for (size_t k = 1; k < np; ++k) if (older(pick[k], pick[first])) first = k;
+  for (size_t k = 0; k < np; ++k) {
+    Device& d = dev_[pick[k]];
+    if (d.used) retire(d);
+    if (k != first && n_free_ < kFreeMax) free_[n_free_++] = pick[k];
+  }
+  return &dev_[pick[first]];
 }
 
-void DeviceTable::retire(Device& d) { d = Device(); }
+void DeviceTable::retire(Device& d) {
+  if (d.used) idxRemove((size_t)(&d - dev_));
+  d = Device();
+}
 
 static void recount(uint32_t* totals, Device& d) {
   if (d.category == d.counted_cat || d.spoofed || d.alias_of || d.hidden) return;
@@ -92,6 +177,7 @@ DeviceTable::Result DeviceTable::ingest(uint8_t node_slot, const Sighting& s, ui
     d->id = next_id_++;
     memcpy(d->addr, s.addr, 6);
     d->radio = radio;
+    idxInsert((size_t)(d - dev_));
     d->kind = s.kind;
     d->category = s.category;
     d->counted_cat = s.category;
@@ -107,7 +193,10 @@ DeviceTable::Result DeviceTable::ingest(uint8_t node_slot, const Sighting& s, ui
   d->hits += s.hits ? s.hits : 1;
   d->rssi_last = s.rssi_last;
   if (s.rssi_max > d->rssi_max) d->rssi_max = s.rssi_max;
-  d->channel = s.channel;
+  // A router's channel comes from its beacons (they say it); its other frames, heard on a
+  // neighbouring channel, don't move it.
+  if (s.kind == KIND_WIFI_BEACON || s.kind == KIND_WIFI_PROBE_RESP || d->kind != KIND_WIFI_BEACON || !d->channel)
+    d->channel = s.channel;
   d->flags |= s.flags;
   if (d->kind != s.kind && kindIsWifi(s.kind) && s.kind == KIND_WIFI_BEACON) d->kind = s.kind;
   if (s.company != 0xFFFF) d->company = s.company;
@@ -438,9 +527,7 @@ uint32_t DeviceTable::totalAll() const {
 }
 
 size_t DeviceTable::used() const {
-  size_t n = 0;
-  for (size_t i = 0; i < cap_; ++i) if (dev_[i].used) ++n;
-  return n;
+  return used_n_;   // kept as entries come and go (no walk of the table)
 }
 
 int bestNode(const Device& d, uint32_t now_ms, uint32_t window_ms, int8_t* rssi, uint8_t* count) {

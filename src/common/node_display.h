@@ -6,6 +6,8 @@
 
 #include <Arduino.h>
 
+#include "ss_proto.h"
+
 namespace ss {
 namespace display {
 
@@ -49,6 +51,13 @@ uint8_t batteryPercent();
 // Jog wheel and buttons; call every loop. Turning flips pages, the BACK key turns the
 // screen off and on.
 void tick(uint32_t now_ms);
+// The ALERTS page: the master's summary (MSG_DASH) and recent events (MSG_DASH_VIEW).
+void onDash(const Dash& d);
+void onEvents(const DashEvents& e);
+// HUNT: a Bluetooth sighting this board made itself (any task; quick).
+void onSighting(const Sighting& s, const char* name);
+// HUNT on a Bluetooth device is running: Bluetooth should listen full-time.
+bool huntBle();
 // Turns the picture around (wheel on the left or the right); saved on the board.
 void flip();
 #endif

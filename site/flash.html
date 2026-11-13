@@ -100,11 +100,15 @@ if (!("serial" in navigator)) $("noSerial").hidden = false;
 const log = (t) => { const l = $("log"); l.textContent += t + "\n"; l.scrollTop = l.scrollHeight; };
 
 function renderPick() {
-  const built = new Set((st.manifest?.builds || []).map((b) => b.env));
+  const built = new Map((st.manifest?.builds || []).map((b) => [b.env, b]));
+  const ver = st.manifest?.version;
   $("pick").innerHTML = BOARDS.map((b) => {
     const ok = b.env && (!st.manifest || built.has(b.env));
+    const m = built.get(b.env);
+    // Release and build time: the same "firmware" line a board shows in its details on the console
+    const fw = m && (ver || m.built) ? `<span class="fw">${ver ? ver : ""}${ver && m.built ? " · " : ""}${m.built ? "built " + m.built : ""}</span>` : "";
     const note = !b.env ? "planned, not flashable yet" : !ok ? "no build published yet" : `${b.chip} · ${b.roles}`;
-    return `<button data-id="${b.id}" aria-pressed="${st.board?.id === b.id}" ${ok ? "" : "disabled"}><b>${b.name}</b><span>${note}</span></button>`;
+    return `<button data-id="${b.id}" aria-pressed="${st.board?.id === b.id}" ${ok ? "" : "disabled"}><b>${b.name}</b><span>${note}</span>${fw}</button>`;
   }).join("");
 }
 $("pick").onclick = (e) => {
@@ -224,7 +228,7 @@ async function init() {
   const m = st.manifest;
   if (m) {
     $("buildLine").textContent = `Latest: ${m.version ? m.version + ", " : ""}built ${m.built}.`;
-    $("dlList").innerHTML = m.builds.map((x) => `<div style="margin:4px 0">${x.label}: <a href="${FW}${x.app}" download>update (${x.app})</a> · <a href="${FW}${x.factory}" download>full (${x.factory})</a></div>`).join("");
+    $("dlList").innerHTML = m.builds.map((x) => `<div style="margin:4px 0">${x.label}${x.built ? ` <span style="color:var(--muted)">(built ${x.built})</span>` : ""}: <a href="${FW}${x.app}" download>update (${x.app})</a> · <a href="${FW}${x.factory}" download>full (${x.factory})</a></div>`).join("");
   } else {
     $("dlList").textContent = "No builds published yet.";
   }

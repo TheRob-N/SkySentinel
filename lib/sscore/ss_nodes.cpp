@@ -67,6 +67,47 @@ bool NodeRegistry::expire(uint32_t now_ms, uint32_t timeout_ms) {
   return changed;
 }
 
+namespace {
+template <uint8_t N>
+void keep(LossWindow::Sample (&a)[N], uint8_t& n, uint32_t gap_ms, const LossWindow::Sample& s) {
+  if (n && s.ms - a[n - 1].ms < gap_ms) return;
+  if (n == N) { for (uint8_t i = 1; i < N; ++i) a[i - 1] = a[i]; --n; }
+  a[n++] = s;
+}
+}  // namespace
+
+void LossWindow::sample(uint32_t now_ms, uint32_t frames, uint32_t lost) {
+  // Counts going backwards = the node was forgotten and joined again: start over.
+  if (mn && (frames < m[mn - 1].frames || lost < m[mn - 1].lost)) reset();
+  const Sample s{now_ms, frames, lost};
+  keep(m, mn, 60000, s);
+  keep(h, hn, 300000, s);
+}
+
+bool LossWindow::over(uint32_t now_ms, uint32_t window_ms, uint32_t frames, uint32_t lost, uint16_t& permille,
+                      uint32_t& span_ms) const {
+  const bool shortW = window_ms <= 600000;
+  const Sample* a = shortW ? m : h;
+  const uint8_t n = shortW ? mn : hn;
+  if (!n) return false;
+  // The newest sample at least window_ms old, else the oldest there is.
+  const Sample* base = &a[0];
+  for (uint8_t i = 0; i < n; ++i) {
+    if (now_ms - a[i].ms >= window_ms) base = &a[i];
+    else break;
+  }
+  span_ms = now_ms - base->ms;
+  if (span_ms < 60000 || frames < base->frames || lost < base->lost) return false;
+  const uint32_t df = frames - base->frames, dl = lost - base->lost;
+  permille = (df + dl) ? (uint16_t)((uint64_t)dl * 1000 / (df + dl)) : 0;
+  return true;
+}
+
+void NodeRegistry::sampleLoss(uint32_t now_ms) {
+  for (auto& n : nodes_)
+    if (n.used) n.loss.sample(now_ms, n.frames, n.lost);
+}
+
 void NodeRegistry::forget(int slot) {
   if (slot >= 0 && slot < kMaxNodes) nodes_[slot] = NodeInfo();
 }

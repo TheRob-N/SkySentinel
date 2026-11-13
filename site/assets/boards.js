@@ -29,7 +29,7 @@ const BOARDS = [
     caps: { wifi24: 1, wifi5: 1, ble: 1, ap: 1, screen: 1, sd: "soon", battery: 1 }, only: [],
     master: { ok: true, best: true, limits: "Tracks 2048 devices at once (PSRAM). Its screen and SD log are still being added." },
     why: "A C5 master in a handheld with its own screen and battery. Screen and SD logging support are in progress." },
-  { id: "tembed", env: "tembed", name: "LilyGO T-Embed CC1101", chip: "ESP32-S3", roles: "Node · Master · Standalone", status: "beta",
+  { id: "tembed", env: "tembed", name: "LilyGO T-Embed CC1101", chip: "ESP32-S3", roles: "Node · Master · Standalone",
     caps: { wifi24: 1, ble: 1, subghz: 1, screen: 1, battery: 1 }, only: ["subghz"],
     master: { ok: true, limits: "Tracks 256 devices at once for now (its PSRAM isn't switched on yet). 2.4 GHz only: add a C5 node for 5 GHz. Keeps its sub-GHz watch, so jammer alerts come from the master itself." },
     why: "Sub-GHz ears for the cluster: watches 314.35 / 315 / 345 / 390 / 433.92 / 915 MHz for key fobs (Toyota, Ford and more), garage remotes, sensors and the jammers used in car theft. Bursts show in the device list; its screen, jog wheel, settings and power menus and the LED ring alerts make it a handheld too. Tire-sensor and fob IDs are next." },

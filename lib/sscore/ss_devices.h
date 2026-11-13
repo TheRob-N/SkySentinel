@@ -95,6 +95,9 @@ class DeviceTable {
 
   DeviceTable(Device* storage, size_t capacity, StitchPolicy policy = StitchPolicy(),
               SpamPolicy spam = SpamPolicy());
+  ~DeviceTable() { delete[] idx_; }
+  DeviceTable(const DeviceTable&) = delete;
+  DeviceTable& operator=(const DeviceTable&) = delete;
 
   // Sightings from our own cluster (node / Core radios) are ignored.
   void addClusterMac(const uint8_t mac[6]);
@@ -166,6 +169,21 @@ class DeviceTable {
 
   Device* dev_;
   size_t cap_;
+  // Address index (in fast internal RAM; the table itself may be in slow PSRAM): open
+  // addressing, linear probing, slot + 1 (0 = empty). A lookup used to walk every entry,
+  // twice per sighting, which cost the master ~1 ms per sighting and stalled it under a
+  // flood. nullptr = not available (allocation failed): plain scans, as before.
+  uint16_t* idx_ = nullptr;
+  size_t idx_mask_ = 0;
+  size_t idxHome(const uint8_t addr[6], uint8_t radio) const;
+  void idxInsert(size_t slot);
+  void idxRemove(size_t slot);
+  // Free slots on hand (from a batch eviction or a stitch), and where to look next while
+  // the table is still filling, so neither walks the whole table per new device.
+  static constexpr uint8_t kFreeMax = 32;
+  uint16_t free_[kFreeMax];
+  uint8_t n_free_ = 0;
+  size_t used_n_ = 0, hint_ = 0;
   StitchPolicy pol_;
   uint32_t next_id_ = 1;
   uint32_t totals_[CAT_COUNT] = {0};

@@ -1,4 +1,4 @@
-# SkySentinel 2.1.2
+# SkySentinel 2.1.3
 
 **Know what's watching.** A listen-only detector for surveillance gear and everyday radio
 devices: Flock ALPR cameras, body cams, AirTags and other trackers, camera glasses, drones
@@ -15,7 +15,10 @@ about 6 to 7 times more Bluetooth heard by C5 and Heltec boards, and much better
 recovery from a known ESP-IDF radio bug. **2.1.1** fixes the web installer for ESP32-S3
 boards, puts T-Embed sub-GHz bursts in the device list, and gives the T-Embed power and
 settings menus; **2.1.2** adds the logo to the Heltec and T-Embed screens and an
-ESP32-only port list. See [CHANGELOG.md](CHANGELOG.md).
+ESP32-only port list. **2.1.3** takes the T-Embed out of beta, lets the cluster move its
+link to a clearer channel (1, 6 or 11) on its own, keeps the master working through a
+beacon / Bluetooth spam flood, and shows each board's exact build on the console and the
+website. See [CHANGELOG.md](CHANGELOG.md).
 
 - **Install from your browser:** https://skysentinel.neyhard.com (no toolchain needed)
 - **How-tos:** https://skysentinel.neyhard.com/docs.html
@@ -604,7 +607,7 @@ published settings. Pins follow Meshtastic's
 variant for this board (SX1262 NSS 8, SCK 9, MOSI 10, MISO 11, RST 12, BUSY 13,
 DIO1 14, TCXO 1.8 V).
 
-## Sub-GHz node (LilyGO T-Embed CC1101), beta
+## Sub-GHz node (LilyGO T-Embed CC1101)
 
 `pio run -e tembed -t upload` (replaces Bruce or the factory demo). The C5's firmware
 (BLE + 2.4 GHz Wi-Fi, defaults to **node**) plus:
@@ -614,9 +617,21 @@ DIO1 14, TCXO 1.8 V).
   a noise floor (follows quiet down fast, loud up slowly), **bursts** (a fob press, a
   sensor, a remote: a sample 15 dB over the floor) and **jamming** (the whole band 20 dB
   over its floor for 3 s: `EV_RF_JAM`, alert on the master, `rf_jam` in the log, once a
-  minute per band). Runs while the Pentest gear or Vehicles category is on.
-- **Screen and jog wheel:** turn for pages: HOME (master link, scanning, battery,
-  sub-GHz state), BANDS (level now, floor, peak, bursts, JAM) and RECENT (latest bursts).
+  minute per band). Runs while the Sub-GHz, Pentest gear or Vehicles category is on.
+- **Screen and jog wheel:** turn for six pages:
+  - **HOME:** master link, scanning, battery, sub-GHz state, the cluster's latest alert.
+  - **ALERTS:** the cluster's latest alert, what's of concern nearby (FOLLOWING in red)
+    and the recent events, from the master with every report (about every 5 s; the node
+    asks for them in its heartbeat).
+  - **BANDS:** level now, floor, peak, bursts, JAM.
+  - **HISTORY:** the last 10 minutes of each band, a bar per 10 s (how far its loudest
+    moment rose over the quiet level), burst slots in color.
+  - **RECENT:** the latest bursts.
+  - **FOXHUNT:** press the wheel to pick a target, a sub-GHz band or a Bluetooth device this
+    board hears itself (surveillance and trackers first), then walk toward it: one big
+    signal number, a bar with a 3 s peak hold, and the LED ring as a meter (more LEDs,
+    blue to red, as it gets louder). A band is watched alone, about 10 readings a second;
+    for a Bluetooth device the board listens full-time during a foxhunt. BACK stops the foxhunt.
   Pressing the wheel also flips pages; a press of BACK turns the screen off and on.
 - **POWER menu:** hold BACK 2 s. Turn the wheel to choose, press it to do it, BACK
   cancels. The same choices as Bruce: **Screen off** (keeps scanning), **Deep sleep**
@@ -625,10 +640,13 @@ DIO1 14, TCXO 1.8 V).
   so and suggests Deep sleep) and **Restart**. After Deep sleep or Power off the master
   shows the node as lost until it comes back.
 - **SETTINGS menu:** hold the wheel 1 s. Press the wheel to step a setting to its next
-  value (saved on the board right away), BACK when done: brightness, screen off after
+  value (saved on the board right away), BACK when done: theme (**Day**, or **Night**: red
+  on black like the CYD's, with a dimmer screen and LED ring), brightness (its own for
+  each theme), screen off after
   (never / 1 / 5 / 15 min; the first touch then only wakes it), start page, turn the
   screen around (also `display flip`), LED ring alerts on / off and brightness, the
-  color for each alert (jamming, sub-GHz burst, lost master; or Off), what counts as a
+  color for each alert (jamming, cluster alert, sub-GHz burst, lost master; or Off), how long
+  a cluster alert flashes (10 s, 30 s, 1 min, 5 min, or until a button; any button stops it), what counts as a
   burst (louder than 10 / 15 / 20 / 25 / 30 dB over the band's quiet level, default 30, and
   longer than 2.5 / 7.5 / 15 / 20 / 30 ms, default 15; louder and longer = fewer false bursts), which bands to
   watch, and whether jamming is sent to the master.
@@ -640,8 +658,9 @@ DIO1 14, TCXO 1.8 V).
   A row is a band, not a device: the bursts carry no ID until they're decoded. Sub-GHz
   rows never raise "following" alerts.
 - **LED ring = alert light:** jamming lights it solid (red by default) while it lasts, a
-  sub-GHz burst flashes it (blue), and while it looks for its master it blinks slowly
-  (yellow). Picking a color in SETTINGS shows it on the ring for a moment.
+  new alert from the cluster pulses it (purple; for as long as Alert flash says), a sub-GHz burst flashes it
+  (blue), and while it looks for its master it blinks slowly (yellow). Picking a color in
+  SETTINGS shows it on the ring for a moment.
 - **Battery** from its BQ27220 fuel gauge.
 - Next: tire-pressure sensor IDs (following alerts on a car), fob and remote IDs, replay
   and brute-force patterns. Pins: SPI 11 / 9 / 10 shared by screen (CS 41, DC 16, RST 40,

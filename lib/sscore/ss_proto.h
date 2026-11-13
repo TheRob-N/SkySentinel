@@ -55,6 +55,7 @@ enum NodeCmd : uint8_t {
   NC_UNPAIR   = 4,  // FORGET on the master: drop the cluster key, wait to be paired again
   NC_SD_FORMAT = 5, // erase and format the node's SD card. arg = request token (the master repeats
                     // commands for a while; the node formats once per token)
+  NC_CHANNEL  = 6,  // the cluster is moving its link to channel arg (1, 6 or 11): follow in a few seconds
 };
 constexpr size_t kMaxLabel = 20;
 struct NodeCommand {  // 3 + len bytes
@@ -243,7 +244,7 @@ bool   decodePairOffer(const uint8_t* p, size_t n, PairOffer& m);
 size_t encodePairKey(const PairKey& m, uint8_t* out, size_t cap);
 bool   decodePairKey(const uint8_t* p, size_t n, PairKey& m);
 
-struct Heartbeat {  // 18 bytes, + 2 optional (GPS), + 7 (health), + 13 (position, clock), + 1 (SD)
+struct Heartbeat {  // 18 bytes, + 2 optional (GPS), + 7 (health), + 13 (position, clock), + 1 (SD), + 1 (link), + 5 (driver, wants), + 6 (firmware)
   uint32_t uptime_s    = 0;
   uint8_t  cfg_version = 0;
   uint8_t  channel     = 0;
@@ -268,7 +269,20 @@ struct Heartbeat {  // 18 bytes, + 2 optional (GPS), + 7 (health), + 13 (positio
   uint8_t  sd          = 0;
   // Link (optional): bit 0 = can do Long Range, bit 1 = sending to the master in LR
   uint8_t  link        = 0;
+  // Wi-Fi driver (optional; esp-idf #19269): the longest a send took to be confirmed
+  // this run, and how long the frames had been stuck before the last stuck-frames
+  // restart (0 = none), both in ms, saturating
+  uint16_t tx_wait_ms  = 0;
+  uint16_t stuck_ms    = 0;
+  // What this node wants from the master (optional): HbWant bits
+  uint8_t  wants       = 0;
+  // Which firmware (optional): ssReleaseCode() and the build stamp (YYMMDDHHMM)
+  uint16_t release     = 0;
+  uint32_t build       = 0;
 };
+// HBW_ALERTS: the dashboard summary (latest alert, threats) and recent events, at the
+// node's normal report rate, without being a dashboard node (no CAP_DASH: T-Embed).
+enum HbWant : uint8_t { HBW_ALERTS = 0x01 };
 enum HbLink : uint8_t { HL_LR_CAPABLE = 0x01, HL_LR_ON = 0x02 };
 enum SdState : uint8_t { SD_NONE = 0, SD_NO_CARD = 1, SD_LOGGING = 2, SD_ERROR = 3, SD_FULL = 4, SD_FORMATTING = 5,
                        SD_UNFORMATTED = 6 /* card answers, but no FAT file system (exFAT, NTFS, blank) */ };

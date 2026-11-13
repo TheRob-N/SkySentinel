@@ -26,6 +26,30 @@ static volatile uint8_t burstSamples_ = 6;
 // the loop drains it every pass; when full, the oldest goes.
 static SubGhzBurst fifo_[16];
 static uint8_t fifoHead_ = 0, fifoLen_ = 0;
+static volatile uint8_t huntBand_ = 0xFF;
+static volatile int8_t huntPeak_ = -127;
+static volatile uint32_t huntMs_ = 0;
+static int8_t histPeak_[kSubGhzBands][kHistSlots];
+static uint8_t histBursts_[kSubGhzBands][kHistSlots];
+static uint32_t histSlot_ = 0;   // the slot number (millis / kHistSlotMs) being filled
+static bool histInit_ = false;
+// Called under evMux: moves the history on to `slot`, clearing the slots it skips.
+static void histAdvance(uint32_t slot) {
+  if (!histInit_) {
+    for (auto& b : histPeak_) for (auto& v : b) v = -127;
+    memset(histBursts_, 0, sizeof(histBursts_));
+    histInit_ = true;
+    histSlot_ = slot;
+    return;
+  }
+  uint32_t steps = slot - histSlot_;
+  if (steps > kHistSlots) steps = kHistSlots;
+  for (uint32_t k = 1; k <= steps; ++k) {
+    const uint32_t i = (histSlot_ + k) % kHistSlots;
+    for (uint8_t b = 0; b < kSubGhzBands; ++b) { histPeak_[b][i] = -127; histBursts_[b][i] = 0; }
+  }
+  histSlot_ = slot;
+}
 
 static bool tune(float mhz) {
   tembed::SpiLock l;
@@ -50,9 +74,10 @@ static void task(void*) {
       continue;
     }
     running_ = true;
-    if (!bandMask_) { vTaskDelay(pdMS_TO_TICKS(500)); continue; }   // every band switched off
+    if (!bandMask_ && huntBand_ >= kSubGhzBands) { vTaskDelay(pdMS_TO_TICKS(500)); continue; }   // every band off
     for (uint8_t b = 0; b < kSubGhzBands; ++b) {
-      if (!(bandMask_ & (1u << b))) continue;
+      const uint8_t hunt = huntBand_;
+      if (hunt < kSubGhzBands ? b != hunt : !(bandMask_ & (1u << b))) continue;   // HUNT: only that band
       band_ = b;
       if (!tune(kSubGhzBandList[b].mhz)) { vTaskDelay(pdMS_TO_TICKS(20)); continue; }
       vTaskDelay(pdMS_TO_TICKS(3));   // let the RSSI settle on the new frequency
@@ -70,10 +95,20 @@ static void task(void*) {
       // press lasts 50 to 500 ms (many samples), while a lone 2.5 ms spike is the board's
       // own radio, the screen's SPI or USB. With 1 sample, a T-Embed on a desk "heard" a
       // burst on every band every few seconds (Nov 10). So the watch gets the Nth loudest.
-      (void)peak;
       const uint8_t nth = burstSamples_ < 1 ? 1 : burstSamples_ > 40 ? 40 : burstSamples_;
       const uint32_t before = watch_.bursts(b);
-      watch_.onLook(b, s[20], s[40 - nth], millis());
+      const uint32_t nowMs = millis();
+      if (b == huntBand_) { huntPeak_ = peak; huntMs_ = nowMs ? nowMs : 1; }   // HUNT: the loudest sample, live
+      watch_.onLook(b, s[20], s[40 - nth], nowMs);
+      {
+        portENTER_CRITICAL(&evMux);
+        const uint32_t slot = nowMs / kHistSlotMs;
+        if (!histInit_ || slot != histSlot_) histAdvance(slot);
+        const uint32_t i = slot % kHistSlots;
+        if (s[40 - nth] > histPeak_[b][i]) histPeak_[b][i] = s[40 - nth];
+        if (watch_.bursts(b) != before && histBursts_[b][i] < 255) ++histBursts_[b][i];
+        portEXIT_CRITICAL(&evMux);
+      }
       if (watch_.bursts(b) != before) {
         SubGhzBurst r;
         if (watch_.recent(&r, 1) == 1) {
@@ -119,6 +154,28 @@ bool ready() { return ready_; }
 bool running() { return running_; }
 uint8_t currentBand() { return band_; }
 uint32_t sweeps() { return sweeps_; }
+void setHunt(uint8_t band) {
+  huntBand_ = band < kSubGhzBands ? band : 0xFF;
+  huntPeak_ = -127;
+  huntMs_ = 0;
+}
+int8_t huntPeak(uint32_t* at_ms) {
+  if (at_ms) *at_ms = huntMs_;
+  return huntPeak_;
+}
+void history(uint8_t band, int8_t peak[kHistSlots], uint8_t bursts[kHistSlots]) {
+  if (band >= kSubGhzBands) return;
+  portENTER_CRITICAL(&evMux);
+  const uint32_t now = millis() / kHistSlotMs;
+  if (!histInit_ || now != histSlot_) histAdvance(now);   // slots nobody wrote since: empty
+  for (uint8_t k = 0; k < kHistSlots; ++k) {               // oldest first
+    const uint32_t i = (histSlot_ + 1 + k) % kHistSlots;
+    peak[k] = histPeak_[band][i];
+    bursts[k] = histBursts_[band][i];
+  }
+  portEXIT_CRITICAL(&evMux);
+}
+
 bool nextBurst(SubGhzBurst& out) {
   bool got = false;
   portENTER_CRITICAL(&evMux);
