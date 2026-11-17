@@ -393,6 +393,11 @@ RTC_NOINIT_ATTR static uint32_t rtcRestartTag;  // survives a software restart, 
 RTC_NOINIT_ATTR static uint32_t rtcNoMasterRuns;  // quick no-master restarts in a row
 static uint32_t txWaitMax = 0;   // longest wait for the driver that did finish (status: tx_wait_max)
 RTC_NOINIT_ATTR static uint32_t rtcStuckMs;   // how long the frames were stuck before a stuck_tx restart
+// What the radio was doing when frames last stuck (saved through the restart, logged at
+// boot): channel, link channel, ms since the last channel switch / send / finished frame,
+// Bluetooth scanning, frames waiting. stuckCtx[0] = magic when valid.
+RTC_NOINIT_ATTR static uint32_t rtcStuckCtx[9];
+static constexpr uint32_t kStuckCtxMagic = 0x53435458;
 static uint16_t lastStuckMs = 0;              // ... read back at boot (heartbeat: stuck_ms)
 static uint8_t bootWhy = RW_UNKNOWN;
 static uint16_t linkLosses = 0;
@@ -817,6 +822,9 @@ static void goHome() {
   if (curChannel != homeChannel) {
     setRadioChannel(homeChannel);
     curChannel = homeChannel;
+    // Let the radio settle on the channel before sending: every T-Embed stuck restart
+    // (Nov 16) began with a send 3 ms after hopping home.
+    if (runRole == RUN_NODE) delay(5);
   }
 }
 
@@ -2602,6 +2610,7 @@ void setup() {
   } else {
     if (!espLink.begin(clusterKey.c_str(), homeChannel)) Out.println("[link] ESP-NOW init FAILED");
     bootHeap("esp-now");
+    espLink.setOneAtATime(runRole == RUN_NODE);   // see EspNowLink::setOneAtATime
     if (runRole == RUN_NODE && corePinned && !unpaired) espLink.addPeer(pinnedCore);
     masterPair.begin(&espLink, myId);
     if (unpaired) {
@@ -2667,6 +2676,13 @@ void setup() {
                 clusterKey.length() ? "set" : "none", setupDone ? "" : ", setup not done",
                 runRole == RUN_NODE && corePinned ? ", master pinned" : "");
   Out.printf("[boot] reset reason %d, restart tag %08lX -> %s\n", bootRawReason, (unsigned long)bootTagSeen, resetWhyName(bootWhy));
+  if (bootWhy == RW_STUCK_TX && rtcStuckCtx[0] == kStuckCtxMagic)
+    Out.printf("[boot] last stuck: radio on ch %lu (link ch %lu), %lu ms after switching %lu -> %lu, last send %lu ms before, "
+               "last frame finished %lu ms before, Bluetooth %s, %lu frames waiting\n",
+               (unsigned long)rtcStuckCtx[1], (unsigned long)rtcStuckCtx[2], (unsigned long)rtcStuckCtx[3],
+               (unsigned long)(rtcStuckCtx[4] >> 8), (unsigned long)(rtcStuckCtx[4] & 0xFF), (unsigned long)rtcStuckCtx[5],
+               (unsigned long)rtcStuckCtx[6], rtcStuckCtx[7] ? "scanning" : "off", (unsigned long)rtcStuckCtx[8]);
+  rtcStuckCtx[0] = 0;
   Out.printf("[%s] started: %s, free heap %lu KB\n", runRoleName(runRole), resetWhyName(bootWhy),
              (unsigned long)(ESP.getFreeHeap() / 1024));
   if (table) Out.printf("[%s] table %u devices, cats 0x%04X\n", runRoleName(runRole), (unsigned)table->capacity(), userCats);
@@ -2728,20 +2744,46 @@ static void startPromisc() {
 static constexpr uint32_t kTxStuckMs = 3000;   // was 1.5 s: a Heltec doing LoRa + GPS + BLE tripped it ~4x a night
 static constexpr uint32_t kTxStuckLrMs = 5000;
 static void checkStuckTx(uint32_t now) {
-  static uint32_t since = 0;
+  // Restart only when NOTHING has finished for the limit: frames still queued behind
+  // ones that do finish (a busy radio) aren't stuck. `since` = when frames started
+  // waiting, for tx_wait_max; `progress` = when the last one finished.
+  static uint32_t since = 0, progress = 0, lastDone = 0;
+  const uint32_t done = espLink.doneCount();
   if (!espLink.inFlight()) {
     if (since && now - since > txWaitMax) txWaitMax = now - since;
     since = 0;
+    lastDone = done;
     return;
   }
-  if (!since) { since = now ? now : 1; return; }
+  if (!since) { since = progress = now ? now : 1; lastDone = done; return; }
+  if (done != lastDone) { lastDone = done; progress = now; }   // one finished: not stuck
   const bool lr = paired && espLink.peerLongRange(coreMac);
-  if (now - since < (lr ? kTxStuckLrMs : kTxStuckMs)) return;
+  if (now - progress < (lr ? kTxStuckLrMs : kTxStuckMs)) return;
+  uint8_t ch = 0;
+  wifi_second_chan_t sc;
+  esp_wifi_get_channel(&ch, &sc);
+  const ChannelSwitch& sw = lastChannelSwitch();
+  const uint32_t sinceSwitch = sw.at_ms ? now - sw.at_ms : 0xFFFFFFFF;
+  const uint32_t sinceSend = espLink.lastSendMs() ? now - espLink.lastSendMs() : 0xFFFFFFFF;
+  const uint32_t sinceDone = espLink.lastDoneMs() ? now - espLink.lastDoneMs() : 0xFFFFFFFF;
   Out.printf("[link] %lu frames stuck in the Wi-Fi driver for %lu ms (Long Range %s, link %d dBm, heap %lu KB), restarting\n",
-             (unsigned long)espLink.inFlight(), (unsigned long)(now - since),
+             (unsigned long)espLink.inFlight(), (unsigned long)(now - progress),
              lr ? "on" : "off", masterRssi, (unsigned long)(ESP.getFreeHeap() / 1024));
+  Out.printf("[link] stuck context: radio on ch %u (link ch %u), last channel switch %lu ms ago (%u -> %u, %lu switches), "
+             "last send %lu ms ago, last frame finished %lu ms ago, Bluetooth %s, waiting since %lu ms\n",
+             ch, homeChannel, (unsigned long)sinceSwitch, sw.from, sw.to, (unsigned long)sw.count, (unsigned long)sinceSend,
+             (unsigned long)sinceDone, bleOn ? "scanning" : "off", (unsigned long)(now - since));
+  rtcStuckCtx[0] = kStuckCtxMagic;
+  rtcStuckCtx[1] = ch;
+  rtcStuckCtx[2] = homeChannel;
+  rtcStuckCtx[3] = sinceSwitch;
+  rtcStuckCtx[4] = ((uint32_t)sw.from << 8) | sw.to;
+  rtcStuckCtx[5] = sinceSend;
+  rtcStuckCtx[6] = sinceDone;
+  rtcStuckCtx[7] = bleOn ? 1 : 0;
+  rtcStuckCtx[8] = espLink.inFlight();
   rtcRestartTag = kStuckTxRestartTag;
-  rtcStuckMs = now - since;
+  rtcStuckMs = now - progress;
   Serial.flush();
   delay(100);
   ESP.restart();
@@ -2827,8 +2869,10 @@ static void talkToMaster(void (*send)(), uint32_t listen_ms = kListenWindowMs) {
   if (briefPause) { bleHeld = true; ++bleTalkStops; bleStop(); }
   send();
   if (briefPause) {
+    // Bluetooth stays off until the frames have actually gone (it came back after 50 ms
+    // regardless, and the stuck frames were all still waiting with it scanning).
     const uint32_t s0 = millis();
-    while (espLink.inFlight() && millis() - s0 < 50) delay(1);
+    while (espLink.inFlight() && millis() - s0 < 300) delay(1);
     bleHeld = false;
     bleStart();
   }

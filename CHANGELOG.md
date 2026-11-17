@@ -1,5 +1,36 @@
 # Changelog
 
+## 2.1.4 (2026-11-17)
+
+**Fixes the T-Embed's stuck-frame restarts.** On 2.1.3 a T-Embed could restart itself
+every few minutes (once a minute at worst) when frames stuck in its Wi-Fi driver. With this
+release it ran 24 hours with none, and so did the Heltec (which had 4 to 9 a day). The fix
+is in the C5 / S3 node firmware (T-Embed, Heltec, C5 nodes); the master and the classic
+boards (CYD, DevKit) only change version number. Flash everything anyway so every board
+reports 2.1.4 (a board on another release shows orange in the console's details).
+
+Known issue (recovers on its own): a DevKit at the edge of the link still loses frames in
+waves of 20 to 40 minutes; it no longer drops off the cluster over it.
+
+
+- **Stuck-frame restarts explain themselves (C5 / S3 nodes):** a node now restarts only
+  when no frame at all has finished for 3 s (5 s on Long Range), instead of when one has
+  been waiting that long, so frames queued behind ones that do finish no longer count.
+  Before restarting it logs the context (`[link] stuck context: ...`): the channel the
+  radio was on and the link channel, the last channel switch (when, from, to), the last
+  send, the last frame that finished, whether Bluetooth was scanning, and how long frames
+  had been waiting. The same is saved through the restart and logged at boot
+  (`[boot] last stuck: ...`). Chasing the T-Embed's stuck restarts (4 to 9 an hour on
+  some days, none on others; more with Bluetooth off, so more time hopping Wi-Fi channels).
+- **Fix for the T-Embed's stuck frames:** the new context showed every one the same way:
+  the radio hopped back to the link channel, 3 ms later the node handed its heartbeat and
+  sightings to the driver back to back, the first finished 4 ms later and the rest never
+  did, with Bluetooth scanning again (it came back after 50 ms whether the frames had gone
+  or not). Nodes now hand frames over one at a time (waiting up to 40 ms for the previous
+  one), keep Bluetooth paused until they've actually gone (up to 300 ms), and let the radio
+  settle 5 ms after hopping home before sending. The Heltec had no stuck restarts at all
+  overnight with the smarter check alone.
+
 ## 2.1.3 (2026-11-13)
 
 **T-Embed CC1101 is no longer beta.** Every board now reports exactly which build it runs,

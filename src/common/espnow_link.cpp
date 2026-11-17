@@ -22,8 +22,21 @@ static void deriveKey16(const char* key, const char* suffix, uint8_t out[16]) {
   memcpy(out, hash, 16);
 }
 
+static ChannelSwitch g_switch;
+const ChannelSwitch& lastChannelSwitch() { return g_switch; }
+
 bool setRadioChannel(uint8_t channel) {
-  return esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE) == ESP_OK;
+  uint8_t was = 0;
+  wifi_second_chan_t sc;
+  esp_wifi_get_channel(&was, &sc);
+  const bool ok = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE) == ESP_OK;
+  if (ok && was != channel) {
+    g_switch.at_ms = millis();
+    g_switch.from = was;
+    g_switch.to = channel;
+    ++g_switch.count;
+  }
+  return ok;
 }
 
 bool EspNowLink::begin(const char* cluster_key, uint8_t home_channel, uint8_t queue_depth) {
@@ -181,6 +194,10 @@ bool EspNowLink::send(const uint8_t* dst, uint8_t type, uint16_t node_id, const 
   const size_t n = encodeFrame(type, node_id, seq_++, payload, len, frame, sizeof(frame));
   if (!n) return false;
   const uint8_t* to = dst ? dst : kBroadcast;
+  if (one_at_a_time_) {   // let the previous frame finish first (bounded: never wait forever)
+    const uint32_t t0 = millis();
+    while (sent_ != done_ && millis() - t0 < 40) delay(1);
+  }
   // ESP-NOW holds only a few frames in flight: when they're all taken, give the radio
   // a moment instead of dropping (a lost heartbeat can cost a node its master).
   esp_err_t r = esp_now_send(to, frame, n);
@@ -189,7 +206,7 @@ bool EspNowLink::send(const uint8_t* dst, uint8_t type, uint16_t node_id, const 
     r = esp_now_send(to, frame, n);
   }
   const bool ok = r == ESP_OK;
-  if (ok) { ++sent_; fail_streak_ = 0; }
+  if (ok) { ++sent_; fail_streak_ = 0; last_send_ms_ = millis(); }
   else { ++send_fail_; ++fail_streak_; last_err_ = r; }
   return ok;
 }
@@ -197,6 +214,7 @@ bool EspNowLink::send(const uint8_t* dst, uint8_t type, uint16_t node_id, const 
 void EspNowLink::onSent(const esp_now_send_info_t*, esp_now_send_status_t status) {
   if (!self_) return;
   self_->done_ = self_->done_ + 1;
+  self_->last_done_ms_ = millis();
   if (status != ESP_NOW_SEND_SUCCESS) self_->not_acked_ = self_->not_acked_ + 1;
 }
 

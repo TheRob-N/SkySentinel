@@ -72,6 +72,16 @@ class EspNowLink {
   uint32_t failStreak() const { return fail_streak_; }  // failed sends in a row (0 after any success)
   uint8_t homeChannel() const { return home_channel_; }
   uint32_t txResets() const { return resets_; }
+  // For the stuck-frame check: frames finished so far (sent or given up on), and when
+  // the last one finished / the last one was handed to the radio (millis).
+  uint32_t doneCount() const { return done_; }
+  uint32_t lastDoneMs() const { return last_done_ms_; }
+  uint32_t lastSendMs() const { return last_send_ms_; }
+  // Node: hand frames to the driver one at a time (wait, up to a few tens of ms, for the
+  // previous one to finish first). With several queued right after hopping home while
+  // Bluetooth shared the radio, the first went out and the rest hung for good (T-Embed,
+  // Nov 16: every stuck restart). The master sends to many nodes and doesn't wait.
+  void setOneAtATime(bool on) { one_at_a_time_ = on; }
 
   static const uint8_t kBroadcast[6];
 
@@ -81,6 +91,9 @@ class EspNowLink {
   uint32_t sent_ = 0, fail_streak_ = 0;
   int last_err_ = 0;
   volatile uint32_t done_ = 0, not_acked_ = 0, rx_count_ = 0;
+  volatile uint32_t last_done_ms_ = 0;
+  uint32_t last_send_ms_ = 0;
+  bool one_at_a_time_ = false;
   bool ensureBroadcastPeer();
   void enableLrRx();
   bool applyRate(const uint8_t mac[6], bool lr);
@@ -107,5 +120,9 @@ class EspNowLink {
 
 // Fixes the Wi-Fi radio on a channel (2.4 or 5 GHz).
 bool setRadioChannel(uint8_t channel);
+// When the radio last changed channel (millis), and from / to which: the stuck-frame
+// check reports it, to tell whether a frame stuck right after a switch.
+struct ChannelSwitch { uint32_t at_ms = 0; uint8_t from = 0, to = 0; uint32_t count = 0; };
+const ChannelSwitch& lastChannelSwitch();
 
 }  // namespace ss
