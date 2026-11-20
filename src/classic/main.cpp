@@ -78,6 +78,11 @@ static constexpr uint32_t kListenWindowMs = 60;
 // to this long), instead of a fixed 60 ms: a DevKit missed every answer for 45 s about
 // once an hour and re-paired, while the master heard it fine the whole time.
 static constexpr uint32_t kBeatListenMs = 400;
+// Resend an unacknowledged frame this much later: past the master's 1.5 s Bluetooth slice.
+static constexpr uint16_t kRetryLaterMs = 1600;
+// Each heartbeat comes up to this much late, at random. A fixed 5 s beat drifted into
+// step with the master's 10 s Bluetooth cycle and stayed there for 50 minutes at a time.
+static constexpr uint32_t kBeatJitterMs = 700;
 // Haven't heard the master this long: stop hopping and inquiring, and just listen
 static constexpr uint32_t kStaleContactMs = 15000;
 // A full report buffer sends at once, but no more often than this: under a flood (spam
@@ -621,7 +626,8 @@ static void emitStatus(uint32_t now) {
 #ifdef SS_CYD
   cyd::describe(Out);
 #endif
-  Out.printf(",\"send_fail\":%lu,\"in_flight\":%lu}\n", (unsigned long)espLink.sendFailures(), (unsigned long)espLink.inFlight());
+  Out.printf(",\"send_fail\":%lu,\"in_flight\":%lu,\"retries\":%lu,\"retry_ok\":%lu}\n", (unsigned long)espLink.sendFailures(),
+             (unsigned long)espLink.inFlight(), (unsigned long)espLink.retries(), (unsigned long)espLink.retriesAcked());
 }
 
 static void saveAndReboot(const char* why) {
@@ -709,6 +715,11 @@ void setup() {
   if (!linkChannelValid(savedChannel)) savedChannel = kLinkChannelDefault;
   homeChannel = curChannel = savedChannel;
   if (!espLink.begin(clusterKey.c_str(), homeChannel, 16)) Out.println("[classic] ESP-NOW init FAILED");
+  // A C5 master gives Bluetooth the radio for 1.5 s of every 10 s. Send one frame at a
+  // time (as the C5 / S3 nodes do since 2.1.4), and resend any it didn't acknowledge
+  // once that slice is over.
+  espLink.setOneAtATime(true);
+  espLink.setRetryLater(kRetryLaterMs);
   espLink.setLrFast(prefs.getBool("lrfast", true));
   lrRemembered = !unpaired && prefs.getBool("lrlink", false);
   if (corePinned && !unpaired) espLink.addPeer(pinnedCore);
@@ -766,7 +777,9 @@ static void checkStuckTx(uint32_t now) {
     return;
   }
   if (!since) { since = now ? now : 1; return; }
-  if (now - since < kTxStuckMs) return;
+  // Stuck = nothing finished for the whole time, not just frames waiting (a busy link
+  // keeps a frame or two in flight while they finish one after another).
+  if (now - since < kTxStuckMs || now - espLink.lastDoneMs() < kTxStuckMs) return;
   rtcStuckMs = now - since;
   rtcStuckMagic = 0x5354554B;
   Out.printf("[link] %lu frames stuck in the Wi-Fi driver for %lu ms (send failures %lu, heap %lu), restarting\n",
@@ -906,7 +919,14 @@ void loop() {
 #endif
     // Heartbeat first: the master answers it with the config that keeps this node
     // paired, so a busy batch of reports must never crowd it out.
-    if (now - lastHeartbeat >= every) { lastHeartbeat = now; sendHeartbeat(); awaitCfgUntil = now + kBeatListenMs; }
+    static uint32_t beatJitter = 0;
+    if (now - lastHeartbeat >= every + beatJitter) {
+      lastHeartbeat = now;
+      beatJitter = esp_random() % kBeatJitterMs;
+      sendHeartbeat();
+      awaitCfgUntil = now + kBeatListenMs;
+    }
+    espLink.service(now);   // home now: resend what the master missed
     flushReports(now);
     lastReport = now;
     lastHop = now + kListenWindowMs;

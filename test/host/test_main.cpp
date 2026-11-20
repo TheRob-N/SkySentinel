@@ -11,6 +11,7 @@
 #include "ss_channels.h"
 #include "ss_classify.h"
 #include "ss_devices.h"
+#include "ss_sigdata.h"
 #include "ss_nodes.h"
 #include "ss_lora.h"
 #include "ss_subghz.h"
@@ -617,6 +618,66 @@ static void testBle() {
   CHECK_EQ(classifyBle(parseAdv(rid, {0xC2, 1, 2, 3, 4, 5}, SS_ADDR_RANDOM)).category, CAT_DRONE);
   Adv flip; flip.name("Flipper Bob");
   CHECK_EQ(classifyBle(parseAdv(flip, {0xC2, 1, 2, 3, 4, 5}, SS_ADDR_RANDOM)).category, CAT_PENTEST);
+  {
+    // Flipper by what it sends, renamed: its case-color service, its company id, its block
+    Adv f1; f1.ad(0x03, {0x82, 0x30}).name("Kitchen");
+    m = classifyBle(parseAdv(f1, {0xC2, 1, 2, 3, 4, 5}, SS_ADDR_RANDOM));
+    CHECK(m.sig_id == SIG_FLIPPER && m.conf == 85);
+    Adv f2; f2.ad(0x03, {0x81, 0x30}).ad(0x19, {0x00, 0x86}).name("Kitchen");
+    m = classifyBle(parseAdv(f2, {0x0C, 0xFA, 0x22, 1, 2, 3}, SS_ADDR_PUBLIC));
+    CHECK(m.sig_id == SIG_FLIPPER && m.conf == 95 && m.strong);
+    Adv f3; f3.mfg(0x0E29, {0x01});
+    CHECK_EQ(classifyBle(parseAdv(f3, {0xC2, 1, 2, 3, 4, 5}, SS_ADDR_RANDOM)).sig_id, SIG_FLIPPER);
+    CHECK_EQ(classifyBle(parseAdv(empty, {0x0C, 0xFA, 0x22, 1, 2, 3}, SS_ADDR_PUBLIC)).sig_id, SIG_FLIPPER);
+    // ... but a random address that happens to start 0C:FA:22 is not one
+    CHECK(classifyBle(parseAdv(empty, {0x0C, 0xFA, 0x22, 1, 2, 3}, SS_ADDR_RANDOM)).sig_id != SIG_FLIPPER);
+    Adv f4; f4.ad(0x03, {0x84, 0x30});   // 0x3084: just past the range
+    CHECK(classifyBle(parseAdv(f4, {0xC2, 1, 2, 3, 4, 5}, SS_ADDR_RANDOM)).sig_id != SIG_FLIPPER);
+  }
+  {
+    // Flock's 128-bit accessory service, as sent (byte-reversed), even alongside another one
+    Adv fl; fl.ad(0x07, {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+                         0x6F, 0x2E, 0x17, 0xDF, 0x14, 0x18, 0xE5, 0x9F, 0xA8, 0x46, 0x32, 0x95, 0x38, 0xBB, 0xCC, 0xE8});
+    m = classifyBle(parseAdv(fl, {0xC2, 1, 2, 3, 4, 5}, SS_ADDR_RANDOM));
+    CHECK(m.category == CAT_FLOCK && m.sig_id == SIG_FLOCK_BLE_UUID && m.strong);
+    // The same bytes in the wrong order are not it
+    Adv fw; fw.ad(0x07, {0xE8, 0xCC, 0xBB, 0x38, 0x95, 0x32, 0x46, 0xA8, 0x9F, 0xE5, 0x18, 0x14, 0xDF, 0x17, 0x2E, 0x6F});
+    CHECK(classifyBle(parseAdv(fw, {0xC2, 1, 2, 3, 4, 5}, SS_ADDR_RANDOM)).sig_id != SIG_FLOCK_BLE_UUID);
+    // A truncated 128-bit list doesn't over-read
+    Adv ft; ft.ad(0x07, {0x6F, 0x2E, 0x17, 0xDF, 0x14});
+    CHECK(classifyBle(parseAdv(ft, {0xC2, 1, 2, 3, 4, 5}, SS_ADDR_RANDOM)).sig_id != SIG_FLOCK_BLE_UUID);
+  }
+  {
+    // Meta: a Facebook service alone is weak; Luxottica's id plus a Meta service is sure
+    Adv mf; mf.ad(0x03, {0xB7, 0xFE});
+    m = classifyBle(parseAdv(mf, {0x5A, 1, 2, 3, 4, 5}, SS_ADDR_RANDOM));
+    CHECK(m.category == CAT_GLASSES && m.sig_id == SIG_META_INC && !m.strong && m.conf < 50);
+    Adv lux; lux.ad(0x03, {0xB8, 0xFE}).mfg(0x0D53, {0x01});
+    m = classifyBle(parseAdv(lux, {0x5A, 1, 2, 3, 4, 5}, SS_ADDR_RANDOM));
+    CHECK(m.sig_id == SIG_RAYBAN_META && m.conf == 95);
+    // Find My network accessory
+    Adv fd44; fd44.ad(0x03, {0x44, 0xFD});
+    m = classifyBle(parseAdv(fd44, {0x5A, 1, 2, 3, 4, 5}, SS_ADDR_RANDOM));
+    CHECK(m.category == CAT_TRACKER && m.sig_id == SIG_FINDMY_ACCESSORY && !m.strong);
+  }
+  {
+    // Camera makers by block: weak, named; home and business cameras stay out of ALPR
+    m = classifyBle(parseAdv(empty, {0xE0, 0xA7, 0x00, 1, 2, 3}, SS_ADDR_PUBLIC));
+    CHECK(m.sig_id == SIG_VERKADA_OUI && m.category == CAT_OTHER_BLE && !m.strong);
+    m = classifyBle(parseAdv(empty, {0x00, 0xBF, 0x15, 1, 2, 3}, SS_ADDR_PUBLIC));
+    CHECK(m.sig_id == SIG_GENETEC_OUI && m.category == CAT_FLOCK && !m.strong && m.conf < 50);
+    CHECK(classifyBle(parseAdv(empty, {0x00, 0x0A, 0xB1, 1, 2, 3}, SS_ADDR_PUBLIC)).sig_id != SIG_GENETEC_OUI);
+    CHECK(classifyBle(parseAdv(empty, {0xE0, 0xA7, 0x00, 1, 2, 3}, SS_ADDR_RANDOM)).sig_id != SIG_VERKADA_OUI);
+    // Every entry is found (the table must stay sorted for the search) and has a name
+    for (const sigdata::CamOui& c : sigdata::kCameraOuis) {
+      m = classifyBle(parseAdv(empty, {(uint8_t)(c.oui >> 16), (uint8_t)(c.oui >> 8), (uint8_t)c.oui, 1, 2, 3},
+                               SS_ADDR_PUBLIC));
+      CHECK_EQ(m.sig_id, (uint16_t)(SIG_HIKVISION_OUI + c.maker));
+      CHECK(sigName(m.sig_id)[0] != 0);
+    }
+    for (size_t i = 1; i < sizeof(sigdata::kCameraOuis) / sizeof(sigdata::kCameraOuis[0]); ++i)
+      CHECK(sigdata::kCameraOuis[i - 1].oui < sigdata::kCameraOuis[i].oui);
+  }
   Adv garmin; garmin.mfg(0x0087, {1, 2, 3});
   CHECK_EQ(classifyBle(parseAdv(garmin, {0xC2, 1, 2, 3, 4, 5}, SS_ADDR_RANDOM)).category, CAT_WEARABLE);
   Adv hm10; hm10.name("HMSoft");
@@ -928,6 +989,15 @@ static void testWifi() {
   parseWifiFrame(esp.b.data(), esp.b.size(), fe);
   m = classifyWifi(fe);
   CHECK(m.sig_id == SIG_FLOCK_WIFI_OUI_GENERIC && m.conf <= 20 && m.category == CAT_OTHER_WIFI);
+  {
+    // A Hikvision NVR's access point: named, filed as ordinary Wi-Fi, weak
+    Frame hik(8, kBcast, {0xBC, 0xAD, 0x28, 0x01, 0x02, 0x03});
+    hik.ssid("HIK-NVR");
+    WifiFrame fh;
+    parseWifiFrame(hik.b.data(), hik.b.size(), fh);
+    m = classifyWifi(fh);
+    CHECK(m.sig_id == SIG_HIKVISION_OUI && m.category == CAT_OTHER_WIFI && !m.strong);
+  }
 
   {
     // Liteon (most of the Flock Wi-Fi OUI list): a laptop probing is weak, an AP is a maybe
@@ -1234,6 +1304,33 @@ static void testNodes() {
     CHECK_EQ(r.at(b).lost, 3u);
     r.noteSeq(b, 65535); r.noteSeq(b, 0);  // wrap
     CHECK_EQ(r.at(b).frames, 6u);
+  }
+  {
+    // Retries (Nov 19): a late resend fills the gap it left; a reboot still doesn't count
+    NodeRegistry r;
+    const int b = r.add(mkHello(7, 0x01), 0);
+    r.noteSeq(b, 10); r.noteSeq(b, 12); r.noteSeq(b, 13);   // 11 went unacknowledged
+    CHECK_EQ(r.at(b).lost, 1u);
+    r.noteSeq(b, 11, true);                                  // its retry, late
+    CHECK_EQ(r.at(b).lost, 0u);
+    CHECK_EQ(r.at(b).frames, 4u);
+    r.noteSeq(b, 14); CHECK_EQ(r.at(b).lost, 0u);            // the order moves on from 13, not 11
+    r.noteSeq(b, 14, true); CHECK_EQ(r.at(b).frames, 5u);    // first try got through: not counted twice
+    r.noteSeq(b, 16, true); CHECK_EQ(r.at(b).lost, 1u);      // a retry that is the newest: normal
+    r.noteSeq(b, 3); CHECK_EQ(r.at(b).lost, 1u);             // restarted (not a retry): not counted
+    r.noteSeq(b, 1, true); CHECK_EQ(r.at(b).lost, 0u);       // ... a retry from before it, late
+    // The flag rides in the version byte and survives a decode; the CRC is fixed up
+    uint8_t f[kMaxFrame];
+    const uint8_t pl[3] = {1, 2, 3};
+    const size_t n = encodeFrame(MSG_SIGHTINGS, 0x9FC4, 77, pl, 3, f, sizeof(f));
+    Header h;
+    CHECK(decodeFrame(f, n, h, nullptr, nullptr) && !h.retry);
+    markFrameRetry(f, n);
+    const uint8_t* p = nullptr; size_t pn = 0;
+    CHECK(decodeFrame(f, n, h, &p, &pn));
+    CHECK(h.retry && h.version == kProtoVersion && h.seq == 77 && h.type == MSG_SIGHTINGS && pn == 3 && p[2] == 3);
+    f[5] ^= 1;   // any other change still fails the CRC
+    CHECK(!decodeFrame(f, n, h, nullptr, nullptr));
   }
   {
     NodeRegistry r;

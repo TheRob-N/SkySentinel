@@ -172,7 +172,15 @@ struct Header {
   uint8_t  type    = 0;
   uint16_t node_id = 0;
   uint16_t seq     = 0;
+  bool     retry   = false;   // a resend of a frame the receiver didn't acknowledge (kRetryFlag)
 };
+// Set in the version byte of a resent frame (same seq as the first try), so the master
+// can tell a late retry from a node that restarted. Masters before 2.1.5 drop such
+// frames (version mismatch), which costs nothing: the first try was lost anyway.
+constexpr uint8_t kRetryFlag = 0x80;
+constexpr size_t kVersionOffset = 2;
+// Marks an encoded frame as a retry and fixes its CRC.
+void markFrameRetry(uint8_t* frame, size_t len);
 
 // `auth` = first 4 bytes of HMAC-SHA256(cluster key, fields before it), little-endian.
 // 0 when the cluster runs without a key. Lets nodes and the Core ignore strangers.

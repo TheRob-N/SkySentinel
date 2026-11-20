@@ -9,6 +9,9 @@
 //   BLE mfgr ID 0x09C8:   Will Greenberg/@wgreenberg
 //   BLE names:            colonelpanichacks/flock-you
 //   SSID patterns:        VirtuallyScott/flock-you + nyanBOX
+//   Flock BLE UUID, Flipper ids, camera makers, Meta FEB7/FEB8, Find My FD44:
+//                         valleytechsolutions/Dragon-Detector (identifiers only; camera
+//                         blocks re-checked against the IEEE registry)
 //
 // Changes from flock.h:
 //  * 00:25:DF moved out of the Flock BLE list into Axon (it is Axon/TASER's OUI).
@@ -70,6 +73,50 @@ static const uint16_t kRavenUuids[] = {0x3100, 0x3200, 0x3300, 0x3400, 0x3500};
 // Pentest gear
 static const uint8_t kHak5Oui[3] = {0x00, 0x13, 0x37};                 // Wi-Fi Pineapple default
 static const uint8_t kPwnagotchiMac[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD};
+// Flipper Zero. Its BLE advert carries a service UUID by case color (0x3080..0x3083),
+// Flipper Devices' company id, and its own appearance value; its public address is in
+// Flipper Devices' block. The name ("Flipper <name>") is the user's to change.
+static const uint8_t kFlipperOui[3] = {0x0C, 0xFA, 0x22};
+static const uint16_t kCoFlipper = 0x0E29;            // Flipper Devices Inc.
+static const uint16_t kFlipperUuidFirst = 0x3080, kFlipperUuidLast = 0x3083;
+static const uint16_t kFlipperAppearance = 0x8600;
+
+// Flock: a 128-bit service UUID seen on Flock BLE accessories,
+// e8ccbb38-9532-46a8-9fe5-1814df172e6f, as it sits in an advert (byte-reversed).
+static const uint8_t kFlockBleUuid128[16] = {0x6F, 0x2E, 0x17, 0xDF, 0x14, 0x18, 0xE5, 0x9F,
+                                             0xA8, 0x46, 0x32, 0x95, 0x38, 0xBB, 0xCC, 0xE8};
+
+// Camera makers by IEEE address block (registry, Nov 2026). A camera maker's block says
+// "a camera, probably", not "surveillance": neighbors' doorbells and NVRs land here too,
+// so these are weak and never alert alone. Genetec makes AutoVu ALPR; only "Genetec Inc."
+// blocks are listed (00:0A:B1 is GENETEC Corporation, an unrelated Japanese firm).
+// Avigilon has no block of its own (Motorola Solutions, already listed as body cams).
+enum CamMaker : uint8_t { CAM_HIKVISION, CAM_VERKADA, CAM_WYZE, CAM_ARLO, CAM_AXIS, CAM_BLINK, CAM_GENETEC };
+struct CamOui { uint32_t oui; uint8_t maker; };
+static const CamOui kCameraOuis[] = {   // sorted by OUI
+  {0x00408C, CAM_AXIS}, {0x00BF15, CAM_GENETEC}, {0x040312, CAM_HIKVISION},
+  {0x085411, CAM_HIKVISION}, {0x08A189, CAM_HIKVISION}, {0x08CC81, CAM_HIKVISION}, {0x0C75D2, CAM_HIKVISION},
+  {0x0CBF15, CAM_GENETEC}, {0x1012FB, CAM_HIKVISION}, {0x1868CB, CAM_HIKVISION}, {0x188025, CAM_HIKVISION},
+  {0x240F9B, CAM_HIKVISION}, {0x2428FD, CAM_HIKVISION}, {0x2432AE, CAM_HIKVISION}, {0x244845, CAM_HIKVISION},
+  {0x24B105, CAM_HIKVISION}, {0x2857BE, CAM_HIKVISION}, {0x2CA59C, CAM_HIKVISION}, {0x2CAA8E, CAM_WYZE},
+  {0x340962, CAM_HIKVISION}, {0x3C1BF8, CAM_HIKVISION}, {0x40ACBF, CAM_HIKVISION}, {0x4419B6, CAM_HIKVISION},
+  {0x4447CC, CAM_HIKVISION}, {0x44A642, CAM_HIKVISION}, {0x4C62DF, CAM_HIKVISION}, {0x4CBD8F, CAM_HIKVISION},
+  {0x4CF5DC, CAM_HIKVISION}, {0x50E538, CAM_HIKVISION}, {0x548C81, CAM_HIKVISION}, {0x54C415, CAM_HIKVISION},
+  {0x5803FB, CAM_HIKVISION}, {0x5850ED, CAM_HIKVISION}, {0x5C345B, CAM_HIKVISION}, {0x64DB8B, CAM_HIKVISION},
+  {0x686DBC, CAM_HIKVISION}, {0x743FC2, CAM_HIKVISION}, {0x74AB93, CAM_BLINK}, {0x7C78B2, CAM_WYZE},
+  {0x80482C, CAM_WYZE}, {0x807C62, CAM_HIKVISION}, {0x80BEAF, CAM_HIKVISION}, {0x80F5AE, CAM_HIKVISION},
+  {0x849A40, CAM_HIKVISION}, {0x8CE748, CAM_HIKVISION}, {0x94E1AC, CAM_HIKVISION}, {0x988B0A, CAM_HIKVISION},
+  {0x989DE5, CAM_HIKVISION}, {0x98DF82, CAM_HIKVISION}, {0x98F112, CAM_HIKVISION}, {0xA0FF0C, CAM_HIKVISION},
+  {0xA41162, CAM_ARLO}, {0xA41437, CAM_HIKVISION}, {0xA4D5C2, CAM_HIKVISION}, {0xACB92F, CAM_HIKVISION},
+  {0xACCB51, CAM_HIKVISION}, {0xACCC8E, CAM_AXIS}, {0xB4A382, CAM_HIKVISION}, {0xB8A44F, CAM_AXIS},
+  {0xBC5E33, CAM_HIKVISION}, {0xBC9B5E, CAM_HIKVISION}, {0xBCAD28, CAM_HIKVISION}, {0xBCBAC2, CAM_HIKVISION},
+  {0xC0517E, CAM_HIKVISION}, {0xC056E3, CAM_HIKVISION}, {0xC06DED, CAM_HIKVISION}, {0xC42F90, CAM_HIKVISION},
+  {0xD03F27, CAM_WYZE}, {0xD4E853, CAM_HIKVISION}, {0xDC07F8, CAM_HIKVISION}, {0xDCD26A, CAM_HIKVISION},
+  {0xE0A700, CAM_VERKADA}, {0xE0BAAD, CAM_HIKVISION}, {0xE0CA3C, CAM_HIKVISION}, {0xE0DF13, CAM_HIKVISION},
+  {0xE82725, CAM_AXIS}, {0xE8A0ED, CAM_HIKVISION}, {0xECA971, CAM_HIKVISION}, {0xECC89C, CAM_HIKVISION},
+  {0xF84DFC, CAM_HIKVISION}, {0xFC9C98, CAM_ARLO}, {0xFC9FFD, CAM_HIKVISION},
+};
+
 
 // Drones: ASTM F3411 Remote ID
 static const uint16_t kRemoteIdBleUuid = 0xFFFA;
@@ -83,6 +130,7 @@ static const uint16_t kChipoloUuids[] = {0xFE33, 0xFE65};
 static const uint16_t kCoChipolo = 0x08C3;
 static const uint16_t kEddystoneUuid = 0xFEAA;  // Google Find Hub (FMDN) frames 0x40 / 0x41
 static const uint16_t kDultUuid = 0xFCB2;       // cross-vendor unwanted-tracking spec
+static const uint16_t kFindMyAccessoryUuid = 0xFD44;   // Apple: Find My network accessories
 
 // Audio / wearables
 static const uint16_t kFastPairUuid = 0xFE2C;

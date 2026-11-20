@@ -74,6 +74,7 @@ def decode_frame(raw: bytes) -> Frame:
     if len(raw) < HEADER_SIZE + 2 or len(raw) > MAX_FRAME:
         raise ProtocolError(f"bad length {len(raw)}")
     magic, version, mtype, node_id, seq = struct.unpack_from("<HBBHH", raw, 0)
+    version &= 0x7F   # high bit: a node's resend of an unacknowledged frame (2.1.5)
     if magic != MAGIC or version != VERSION:
         raise ProtocolError("bad magic/version")
     (want,) = struct.unpack_from("<H", raw, len(raw) - 2)

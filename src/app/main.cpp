@@ -1621,7 +1621,7 @@ static void masterHandlePacket(const RxPacket& p, uint32_t now) {
     sendWelcome(slot, now);
     needAssign = true;
   }
-  nodes.noteSeq(slot, h.seq);
+  nodes.noteSeq(slot, h.seq, h.retry);
 
   switch (h.type) {
     case MSG_HEARTBEAT: {

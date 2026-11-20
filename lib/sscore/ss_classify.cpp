@@ -75,7 +75,7 @@ static bool ssidEndsInMac(const char* ssid, uint8_t len, const uint8_t mac[6]) {
 
 bool parseBleAdv(const uint8_t* p, size_t len, BleAdv& a) {
   a.has_flags = false; a.has_company = false; a.company = 0xFFFF; a.mfg = nullptr; a.mfg_len = 0;
-  a.n_uuid16 = 0; a.n_uuid128 = 0; a.n_svc = 0; a.name[0] = '\0'; a.name_len = 0; a.has_tx_power = false;
+  a.n_uuid16 = 0; a.n_uuid128 = 0; a.uuid128[0] = a.uuid128[1] = nullptr; a.n_svc = 0; a.name[0] = '\0'; a.name_len = 0; a.has_tx_power = false;
   a.has_appearance = false; a.appearance = 0;
 
   // The fingerprint covers what a device model/state always sends the same way:
@@ -104,6 +104,8 @@ bool parseBleAdv(const uint8_t* p, size_t len, BleAdv& a) {
         }
         break;
       case 0x06: case 0x07:  // 128-bit service UUIDs
+        for (uint8_t k = 0; k + 16 <= dl; k += 16)
+          if (a.n_uuid128 + k / 16 < 2) a.uuid128[a.n_uuid128 + k / 16] = d + k;
         a.n_uuid128 = (uint8_t)(a.n_uuid128 + dl / 16);
         fp = fnv1a(d, dl, fp);
         break;
@@ -167,6 +169,46 @@ static bool hasUuid16(const BleAdv& a, uint16_t u) {
   for (uint8_t i = 0; i < a.n_uuid16; ++i) if (a.uuid16[i] == u) return true;
   for (uint8_t i = 0; i < a.n_svc; ++i) if (a.svc[i].uuid == u) return true;
   return false;
+}
+
+static bool hasUuid128(const BleAdv& a, const uint8_t u[16]) {
+  for (uint8_t i = 0; i < 2 && i < a.n_uuid128; ++i)
+    if (a.uuid128[i] && memcmp(a.uuid128[i], u, 16) == 0) return true;
+  return false;
+}
+
+// A camera maker's address block (kCameraOuis is sorted): the match, or none. Only the
+// ALPR maker (Genetec) counts as ALPR; home and business cameras are filed under `other`
+// with their maker named, so the ALPR count isn't filled with neighbors' doorbells.
+static bool matchCameraOui(const uint8_t mac[6], uint8_t other, Match& out) {
+  const uint32_t o = ((uint32_t)mac[0] << 16) | ((uint32_t)mac[1] << 8) | mac[2];
+  size_t lo = 0, hi = countof(kCameraOuis);
+  while (lo < hi) {
+    const size_t mid = (lo + hi) / 2;
+    if (kCameraOuis[mid].oui < o) lo = mid + 1; else hi = mid;
+  }
+  if (lo == countof(kCameraOuis) || kCameraOuis[lo].oui != o) return false;
+  // Business / city gear a little above home cameras; none of it strong.
+  static const uint8_t kConf[] = {35, 40, 30, 30, 40, 30, 45};   // CamMaker order
+  const uint8_t m = kCameraOuis[lo].maker;
+  out.category = m == CAM_GENETEC ? (uint8_t)CAT_FLOCK : other;
+  out.sig_id = (uint16_t)(SIG_HIKVISION_OUI + m);
+  out.conf = kConf[m];
+  out.strong = false;
+  return true;
+}
+
+// Flipper Zero by what its firmware sends, not by name: its case-color service UUID,
+// Flipper Devices' company id, its appearance, its public address block. Any two
+// together are sure; one alone is likely.
+static int flipperEvidence(const BleAdv& a) {
+  int n = 0;
+  for (uint8_t i = 0; i < a.n_uuid16; ++i)
+    if (a.uuid16[i] >= kFlipperUuidFirst && a.uuid16[i] <= kFlipperUuidLast) { ++n; break; }
+  if (a.has_company && a.company == kCoFlipper) ++n;
+  if (a.has_appearance && a.appearance == kFlipperAppearance) ++n;
+  if (!bleIsRandom(a) && memcmp(a.addr, kFlipperOui, 3) == 0) ++n;
+  return n;
 }
 
 static const BleSvcData* svcData(const BleAdv& a, uint16_t u) {
@@ -252,7 +294,11 @@ static const IdSig kUuidSigs[] = {
   {0xFD8E, CAT_BODYCAM, SIG_MOTO_SOLUTIONS, 60, false},
   {0xFD5F, CAT_GLASSES, SIG_META_UUID, 75, true},   // Meta Platforms Technologies (Ray-Ban Meta, Quest)
   {0xFE45, CAT_GLASSES, SIG_SNAP_SPECTACLES, 80, true},
+  // Facebook / Meta services: on the glasses, but on Quest and Portal too. Weak alone.
+  {0xFEB7, CAT_GLASSES, SIG_META_INC, 45, false},
+  {0xFEB8, CAT_GLASSES, SIG_META_INC, 45, false},
 };
+static const uint16_t kMetaUuids[] = {0xFD5F, 0xFEB7, 0xFEB8};
 
 template <size_t N>
 static const OuiSig* matchOuiSig(const OuiSig (&list)[N], const uint8_t mac[6]) {
@@ -278,6 +324,7 @@ Match classifyBle(const BleAdv& a) {
     if (raven == 1) return mk(CAT_FLOCK, SIG_RAVEN_PARTIAL, 45, false);
   }
   if (a.has_company && a.company == kFlockBleCompany) return mk(CAT_FLOCK, SIG_FLOCK_BLE_MFGR, 70, false);
+  if (hasUuid128(a, kFlockBleUuid128)) return mk(CAT_FLOCK, SIG_FLOCK_BLE_UUID, 80, true);
 
   // Axon body cams
   if (a.name_len && strstr(a.name, "Axon")) return mk(CAT_BODYCAM, SIG_AXON_NAME, 80, true);
@@ -298,6 +345,10 @@ Match classifyBle(const BleAdv& a) {
   // Drones: Remote ID is a broadcast standard, the strongest thing here
   if (hasUuid16(a, kRemoteIdBleUuid) || svcData(a, kRemoteIdBleUuid)) return mk(CAT_DRONE, SIG_REMOTE_ID_BLE, 95, true);
 
+  // Ray-Ban / Oakley Meta: Luxottica's company id together with a Meta service is sure.
+  if (a.has_company && a.company == 0x0D53)
+    for (uint16_t u : kMetaUuids) if (hasUuid16(a, u)) return mk(CAT_GLASSES, SIG_RAYBAN_META, 95, true);
+
   // Body cams, glasses, drones by assigned service UUID, then by maker
   for (const IdSig& u : kUuidSigs)
     if (hasUuid16(a, u.id) || svcData(a, u.id)) return mk(u.cat, u.sig, u.conf, u.strong);
@@ -307,6 +358,7 @@ Match classifyBle(const BleAdv& a) {
 
   if (pub) {
     if (const OuiSig* o = matchOuiSig(kOuiSigs, a.addr)) return mk(o->cat, o->sig, o->conf, o->strong);
+    { Match m; if (matchCameraOui(a.addr, CAT_OTHER_BLE, m)) return m; }
     if (const Oui* o = matchOui(kFlockBleOuis, a.addr))
       return mk(CAT_FLOCK, SIG_FLOCK_BLE_OUI, o->generic ? 20 : 50, false);
   }
@@ -325,9 +377,14 @@ Match classifyBle(const BleAdv& a) {
   for (uint16_t u : kChipoloUuids) if (hasUuid16(a, u) || svcData(a, u)) return mk(CAT_TRACKER, SIG_CHIPOLO, 85, true);
   if (a.has_company && a.company == kCoChipolo) return mk(CAT_TRACKER, SIG_CHIPOLO, 75, true);
   if (hasUuid16(a, kDultUuid)) return mk(CAT_TRACKER, SIG_DULT, 70, false);
+  if (hasUuid16(a, kFindMyAccessoryUuid)) return mk(CAT_TRACKER, SIG_FINDMY_ACCESSORY, 60, false);
 
   // Pentest gear
-  if (a.name_len && startsWith(a.name, "Flipper ")) return mk(CAT_PENTEST, SIG_FLIPPER, 85, true);
+  {
+    const int ev = flipperEvidence(a);
+    if (ev >= 2) return mk(CAT_PENTEST, SIG_FLIPPER, 95, true);
+    if (ev == 1 || (a.name_len && startsWith(a.name, "Flipper "))) return mk(CAT_PENTEST, SIG_FLIPPER, 85, true);
+  }
 
   // Skimmer-style serial modules
   for (const char* n : kSerialModuleNames)
@@ -698,6 +755,7 @@ Match classifyWifi(const WifiFrame& f) {
   if (global && memcmp(tx, kHak5Oui, 3) == 0) return mk(CAT_PENTEST, SIG_PINEAPPLE, 85, true);
   if (global) {
     if (const OuiSig* o = matchOuiSig(kOuiSigs, tx)) return mk(o->cat, o->sig, o->conf, o->strong);
+    { Match m; if (matchCameraOui(tx, CAT_OTHER_WIFI, m)) return m; }
     if (const Oui* o = matchOui(kFlockWifiOuis, tx)) {
       // The list is almost all Liteon, Silicon Labs and other module makers whose Wi-Fi
       // parts are in countless laptops and TVs. A Flock camera runs an access point, so
@@ -747,6 +805,14 @@ const char* sigName(uint16_t id) {
     case SIG_AXON_NAME: return "Axon body camera";
     case SIG_FLOCK_OWN_OUI: return "Flock Safety device (own OUI)";
     case SIG_RING_OUI: return "Ring camera (Amazon)";
+    case SIG_FLOCK_BLE_UUID: return "Flock BLE accessory";
+    case SIG_HIKVISION_OUI: return "Hikvision camera maker";
+    case SIG_VERKADA_OUI: return "Verkada camera maker";
+    case SIG_WYZE_OUI: return "Wyze camera maker";
+    case SIG_ARLO_OUI: return "Arlo camera maker";
+    case SIG_AXIS_OUI: return "Axis camera maker";
+    case SIG_BLINK_OUI: return "Blink camera (Amazon)";
+    case SIG_GENETEC_OUI: return "Genetec (ALPR maker)";
     case SIG_AXON_UUID: return "Axon / TASER device";
     case SIG_TASER_MFGR: return "Axon / TASER device (maker ID)";
     case SIG_MOTO_SOLUTIONS: return "Motorola Solutions (police radio or body cam)";
@@ -777,6 +843,7 @@ const char* sigName(uint16_t id) {
     case SIG_GOOGLE_FMDN: return "Google Find Hub tracker";
     case SIG_DULT: return "Tracker (unwanted-tracking alert)";
     case SIG_CHIPOLO: return "Chipolo tracker";
+    case SIG_FINDMY_ACCESSORY: return "Find My accessory";
     case SIG_REMOTE_ID_BLE: return "Drone Remote ID (BLE)";
     case SIG_REMOTE_ID_WIFI: return "Drone Remote ID (Wi-Fi)";
     case SIG_SERIAL_BLE_MODULE: return "Serial BLE module";

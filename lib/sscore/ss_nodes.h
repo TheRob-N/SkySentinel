@@ -80,7 +80,9 @@ class NodeRegistry {
   int touch(const uint8_t mac[6], uint32_t now_ms, int8_t rssi = -127);
   int find(const uint8_t mac[6]) const;
   // Sequence tracking for loss stats.
-  void noteSeq(int slot, uint16_t seq);
+  // Counts a frame and the frames missing before it. `retry`: a resend of a frame that
+  // went unacknowledged; if it fills an earlier gap, that gap shrinks by one.
+  void noteSeq(int slot, uint16_t seq, bool retry = false);
   // Marks nodes silent for longer than timeout as offline. True if any changed.
   bool expire(uint32_t now_ms, uint32_t timeout_ms);
   // Keeps each node's recent-loss samples (call every loop; cheap).

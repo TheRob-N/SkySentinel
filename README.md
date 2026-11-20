@@ -317,9 +317,21 @@ against IEEE before it went in. Details and credits are in `ss_sigdata.h`.
 | Category | Strong (alerts) | Weaker (noted) |
 |---|---|---|
 | Body cams | Axon name, Axon / TASER service UUIDs (FC81, FE6B, FE6C), TASER maker ID 0x034D | OUIs: Axon, Digital Ally, WatchGuard Video, Utility (BodyWorn), Zepcam. Motorola Solutions maker ID, UUIDs and OUIs (police radios too) |
-| Glasses | Luxottica maker ID 0x0D53 and OUI 98:59:49 (Ray-Ban / Oakley Meta), Snap 0x03C2 / FE45, Meta 0x058E / FD5F (also Quest headsets), Vuzix 0x060C | Meta Platforms 0x01AB, Meta and Vuzix OUIs |
+| Glasses | Luxottica maker ID 0x0D53 and OUI 98:59:49 (Ray-Ban / Oakley Meta; surest with a Meta service UUID alongside), Snap 0x03C2 / FE45, Meta 0x058E / FD5F (also Quest headsets), Vuzix 0x060C | Meta Platforms 0x01AB, Facebook service UUIDs FEB7 / FEB8, Meta and Vuzix OUIs |
 | Drones | Remote ID (BLE and Wi-Fi), DJI DroneID vendor element 26:37:12 | DJI maker ID 0x08AA (also Osmo cameras), DJI, Parrot and Skydio OUIs, drone hotspot names (TELLO-, DJI-, Mavic, Anafi, Bebop, Skydio) |
-| ALPR | Flock Safety's own OUI B4:1E:52 | Ring OUIs (weak, never alert alone) |
+| ALPR | Flock Safety's own OUI B4:1E:52, Flock accessory BLE service e8ccbb38-9532-46a8-9fe5-1814df172e6f | Ring OUIs and Genetec (AutoVu ALPR maker) OUIs (weak, never alert alone) |
+| Pentest | Flipper Zero by any of: its case-color service UUID (0x3080–0x3083), Flipper Devices maker ID 0x0E29, OUI 0C:FA:22 (public address), the "Flipper " name. Two of them together (or with its appearance 0x8600) is surer still | |
+| Other | | Camera makers by OUI, named in the details: Hikvision, Verkada, Wyze, Arlo, Axis, Blink. Filed as ordinary Wi-Fi / BLE so neighbors' doorbells and NVRs don't fill the ALPR count |
+
+### From Dragon Detector (November 2026)
+
+The Flock accessory UUID, the Flipper identifiers, the camera-maker list, Meta FEB7 / FEB8
+and Apple's Find My accessory service (FD44, a weak tracker hint) come from
+[Dragon Detector](https://github.com/valleytechsolutions/Dragon-Detector) by Valley Tech
+Solutions. Identifiers only (no code); the camera OUIs were pulled fresh from the IEEE
+registry. 00:0A:B1 belongs to GENETEC Corporation of Japan, not Genetec Inc., and is left
+out. Avigilon has no OUI of its own. Its "Biscuit" UUID (4fafc201-...) is the stock ESP32
+Arduino BLE example's, so it would flag every hobby board and is left out.
 
 The "Flock BLE OUI" list from ouispy-detector turned out to be mostly other makers when
 run through IEEE: Ring, DJI, Parrot, Skydio, Luxottica, Apple and HPE. Those moved to

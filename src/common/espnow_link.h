@@ -82,6 +82,16 @@ class EspNowLink {
   // Bluetooth shared the radio, the first went out and the rest hung for good (T-Embed,
   // Nov 16: every stuck restart). The master sends to many nodes and doesn't wait.
   void setOneAtATime(bool on) { one_at_a_time_ = on; }
+  // Node: resend a unicast frame the receiver didn't acknowledge, once, `ms` later (same
+  // seq, marked as a retry). A C5 master gives Bluetooth the radio for 1.5 s of every
+  // 10 s and frames that land in that slice go unacknowledged; a classic node whose
+  // 5 s heartbeat drifted into step with it lost 10-15% for 50 minutes every ~2.75 h
+  // (Nov 18). Waiting past the slice gets the frame through. 0 = off. Takes ~2.4 KB.
+  void setRetryLater(uint16_t ms);
+  // Sends the retries that are due. Call only while on the home channel.
+  void service(uint32_t now_ms);
+  uint32_t retries() const { return retries_; }
+  uint32_t retriesAcked() const { return retry_ok_; }
 
   static const uint8_t kBroadcast[6];
 
@@ -94,6 +104,17 @@ class EspNowLink {
   volatile uint32_t last_done_ms_ = 0;
   uint32_t last_send_ms_ = 0;
   bool one_at_a_time_ = false;
+  // Retry-later bookkeeping: a ring of the last frames handed to the radio (indexed by
+  // their send count, so the in-order send callbacks find them), and frames due a retry.
+  struct TxRec { uint32_t k; bool valid, unicast, retry; uint8_t dst[6]; uint8_t len; uint8_t data[kMaxFrame]; };
+  struct Due { bool used; uint32_t at; uint8_t dst[6]; uint8_t len; uint8_t data[kMaxFrame]; };
+  static constexpr uint8_t kTxRing = 6, kDueSlots = 3;
+  TxRec* ring_ = nullptr;
+  Due* due_ = nullptr;
+  uint16_t retry_ms_ = 0;
+  volatile uint32_t retries_ = 0, retry_ok_ = 0;
+  portMUX_TYPE mux_ = portMUX_INITIALIZER_UNLOCKED;
+  bool sendRaw(const uint8_t* to, const uint8_t* frame, size_t n, bool unicast, bool retry);
   bool ensureBroadcastPeer();
   void enableLrRx();
   bool applyRate(const uint8_t mac[6], bool lr);

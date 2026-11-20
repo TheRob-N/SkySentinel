@@ -1,5 +1,40 @@
 # Changelog
 
+## 2.1.5 (2026-11-19)
+
+Flash every board, master included: the master is what counts a node's late retries
+as delivered. A 2.1.4 master still works with 2.1.5 nodes, it just ignores their retries.
+
+- **Classic nodes (CYD, DevKit) no longer lose frames in waves.** The DevKit lost 10-15%
+  of its frames for about 50 minutes every 2.5-3 hours, day and night. Cause: the C5
+  master gives Bluetooth the radio for 1.5 s of every 10 s, frames that land in that
+  slice can go unacknowledged, and the DevKit's 5 s heartbeat drifted slowly into and out
+  of step with it (in step 30% of the time). With the master's own scanning off overnight,
+  both classic boards lost nothing for 14 hours. Now classic nodes:
+  - send one frame at a time, as the C5 / S3 nodes have since 2.1.4;
+  - resend a frame the master didn't acknowledge, once, 1.6 s later (past the slice),
+    marked as a retry so the master fills the gap instead of counting it lost;
+  - send each heartbeat up to 0.7 s late at random, so they can't sit in step with the
+    master's cycle.
+  - Status lines show `retries` and `retry_ok`.
+- **Classic nodes' stuck-frame check is progress-based**, like the C5 / S3 one: it restarts
+  only when no frame has finished for 5 s, not whenever frames have been waiting that long.
+- The master's own scanning (`local on`) can stay on.
+- **More signatures, from Dragon Detector** (identifiers only; credits in the README and
+  `ss_sigdata.h`):
+  - Flock's BLE accessory service (128-bit UUID e8ccbb38-...), a strong ALPR match. 128-bit
+    service UUIDs are now read from adverts, not just counted.
+  - Flipper Zero by what it sends, so a renamed one still shows: its case-color service
+    UUID (0x3080 to 0x3083), Flipper Devices' maker ID 0x0E29, its 0C:FA:22 address block
+    and its appearance value. Any two together score higher than the name alone.
+  - Camera makers by address block, named in the details (Hikvision, Verkada, Wyze, Arlo,
+    Axis, Blink): weak, and filed as ordinary Wi-Fi / BLE so they don't fill the ALPR
+    count. Genetec (AutoVu ALPR) is the exception: weak ALPR, like Ring. 82 blocks, all
+    from the IEEE registry.
+  - Facebook services FEB7 / FEB8 (weak alone, like Meta's maker ID); Luxottica's maker ID
+    with any Meta service is the surest Ray-Ban / Oakley Meta match.
+  - Apple's Find My accessory service FD44, a weak tracker hint.
+
 ## 2.1.4 (2026-11-17)
 
 **Fixes the T-Embed's stuck-frame restarts.** On 2.1.3 a T-Embed could restart itself

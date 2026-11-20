@@ -45,8 +45,17 @@ int NodeRegistry::touch(const uint8_t mac[6], uint32_t now_ms, int8_t rssi) {
   return slot;
 }
 
-void NodeRegistry::noteSeq(int slot, uint16_t seq) {
+void NodeRegistry::noteSeq(int slot, uint16_t seq, bool retry) {
   NodeInfo& n = nodes_[slot];
+  if (retry && n.have_seq) {
+    const int16_t d = (int16_t)(uint16_t)(seq - n.last_seq);
+    if (d == 0) return;   // the first try got through after all (only its ack was lost)
+    if (d < 0) {          // late: it was counted missing when a newer frame arrived
+      ++n.frames;
+      if (n.lost) --n.lost;
+      return;
+    }
+  }
   ++n.frames;
   if (n.have_seq) {
     const uint16_t gap = (uint16_t)(seq - n.last_seq - 1);

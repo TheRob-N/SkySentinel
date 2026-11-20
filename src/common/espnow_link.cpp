@@ -3,6 +3,7 @@
 #include <esp_wifi.h>
 #include <mbedtls/md.h>
 #include <mbedtls/sha256.h>
+#include <new>
 #include <string.h>
 
 namespace ss {
@@ -193,13 +194,53 @@ bool EspNowLink::send(const uint8_t* dst, uint8_t type, uint16_t node_id, const 
   uint8_t frame[kMaxFrame];
   const size_t n = encodeFrame(type, node_id, seq_++, payload, len, frame, sizeof(frame));
   if (!n) return false;
-  const uint8_t* to = dst ? dst : kBroadcast;
+  return sendRaw(dst ? dst : kBroadcast, frame, n, dst != nullptr, false);
+}
+
+void EspNowLink::setRetryLater(uint16_t ms) {
+  if (ms && !ring_) {
+    ring_ = new (std::nothrow) TxRec[kTxRing];
+    due_ = new (std::nothrow) Due[kDueSlots];
+    if (!ring_ || !due_) { delete[] ring_; delete[] due_; ring_ = nullptr; due_ = nullptr; return; }
+    for (int i = 0; i < kTxRing; ++i) ring_[i].valid = false;
+    for (int i = 0; i < kDueSlots; ++i) due_[i].used = false;
+  }
+  retry_ms_ = ring_ ? ms : 0;
+}
+
+void EspNowLink::service(uint32_t now) {
+  if (!due_) return;
+  for (int i = 0; i < kDueSlots; ++i) {
+    Due d;
+    portENTER_CRITICAL(&mux_);
+    const bool go = due_[i].used && (int32_t)(now - due_[i].at) >= 0;
+    if (go) { d = due_[i]; due_[i].used = false; }
+    portEXIT_CRITICAL(&mux_);
+    if (!go) continue;
+    markFrameRetry(d.data, d.len);
+    if (sendRaw(d.dst, d.data, d.len, true, true)) retries_ = retries_ + 1;
+  }
+}
+
+bool EspNowLink::sendRaw(const uint8_t* to, const uint8_t* frame, size_t n, bool unicast, bool retry) {
   if (one_at_a_time_) {   // let the previous frame finish first (bounded: never wait forever)
     const uint32_t t0 = millis();
     while (sent_ != done_ && millis() - t0 < 40) delay(1);
   }
   // ESP-NOW holds only a few frames in flight: when they're all taken, give the radio
   // a moment instead of dropping (a lost heartbeat can cost a node its master).
+  if (ring_) {   // before sending: the callback can run before esp_now_send returns
+    TxRec& t = ring_[sent_ % kTxRing];
+    portENTER_CRITICAL(&mux_);
+    t.k = sent_;
+    t.valid = true;
+    t.unicast = unicast;
+    t.retry = retry;
+    memcpy(t.dst, to, 6);
+    t.len = (uint8_t)n;
+    memcpy(t.data, frame, n);
+    portEXIT_CRITICAL(&mux_);
+  }
   esp_err_t r = esp_now_send(to, frame, n);
   for (int i = 0; i < 5 && r == ESP_ERR_ESPNOW_NO_MEM; ++i) {
     delay(2);
@@ -213,6 +254,30 @@ bool EspNowLink::send(const uint8_t* dst, uint8_t type, uint16_t node_id, const 
 
 void EspNowLink::onSent(const esp_now_send_info_t*, esp_now_send_status_t status) {
   if (!self_) return;
+  EspNowLink& l = *self_;
+  if (l.ring_) {   // callbacks come in send order: frame number done_ is this one
+    const uint32_t k = l.done_;
+    TxRec& t = l.ring_[k % kTxRing];
+    portENTER_CRITICAL(&l.mux_);
+    if (t.valid && t.k == k) {
+      t.valid = false;
+      if (status == ESP_NOW_SEND_SUCCESS) {
+        if (t.retry) l.retry_ok_ = l.retry_ok_ + 1;
+      } else if (t.unicast && !t.retry && l.retry_ms_) {
+        for (int i = 0; i < kDueSlots; ++i) {
+          Due& d = l.due_[i];
+          if (d.used) continue;
+          d.used = true;
+          d.at = millis() + l.retry_ms_;
+          memcpy(d.dst, t.dst, 6);
+          d.len = t.len;
+          memcpy(d.data, t.data, t.len);
+          break;
+        }
+      }
+    }
+    portEXIT_CRITICAL(&l.mux_);
+  }
   self_->done_ = self_->done_ + 1;
   self_->last_done_ms_ = millis();
   if (status != ESP_NOW_SEND_SUCCESS) self_->not_acked_ = self_->not_acked_ + 1;

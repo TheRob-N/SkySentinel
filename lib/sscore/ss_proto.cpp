@@ -65,12 +65,22 @@ size_t encodeFrame(uint8_t type, uint16_t node_id, uint16_t seq,
   return w.ok() ? w.size() : 0;
 }
 
+void markFrameRetry(uint8_t* frame, size_t len) {
+  if (!frame || len < kHeaderSize + kCrcSize) return;
+  frame[kVersionOffset] |= kRetryFlag;
+  const uint16_t c = crc16(frame, len - kCrcSize);
+  frame[len - 2] = (uint8_t)(c & 0xFF);
+  frame[len - 1] = (uint8_t)(c >> 8);
+}
+
 bool decodeFrame(const uint8_t* frame, size_t len, Header& hdr,
                  const uint8_t** payload, size_t* payload_len) {
   if (!frame || len < kHeaderSize + kCrcSize || len > kMaxFrame) return false;
   Reader r(frame, len);
   hdr.magic = r.u16();
-  hdr.version = r.u8();
+  const uint8_t v = r.u8();
+  hdr.version = v & (uint8_t)~kRetryFlag;
+  hdr.retry = (v & kRetryFlag) != 0;
   hdr.type = r.u8();
   hdr.node_id = r.u16();
   hdr.seq = r.u16();
