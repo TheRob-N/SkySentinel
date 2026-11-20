@@ -20,12 +20,12 @@ void dashLabel(const Device& d, char* out, size_t cap);
 
 // Fills counts, devices_now and the closest surveillance devices (following first,
 // then loudest, then strongest signal). Leaves deploy, nodes and the alert alone.
-void buildDash(const DeviceTable& table, uint32_t now_ms, uint16_t cats, Dash& out);
+void buildDash(const DeviceTable& table, uint32_t now_ms, CatMask cats, Dash& out);
 
 // Devices screen: the same list as the web page (not hidden, grouped or spoofed, heard
 // in the last minute, category switched on), best first: confidence, then most recent.
 // Fills rows [offset, offset + kDashRows).
-void buildDeviceView(const DeviceTable& table, uint32_t now_ms, uint16_t cats, uint16_t offset, DashDevices& out);
+void buildDeviceView(const DeviceTable& table, uint32_t now_ms, CatMask cats, uint16_t offset, DashDevices& out);
 // One device by id (found = false if it's gone).
 void buildDetail(DeviceTable& table, uint32_t id, uint32_t now_ms, DashDetail& out);
 

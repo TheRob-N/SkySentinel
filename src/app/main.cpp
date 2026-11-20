@@ -64,6 +64,8 @@ extern "C" bool ssPsramTest(void) __asm__("esp_psram_extram_test");
 #include "ss_channels.h"
 #include "ss_classify.h"
 #include "ss_gps.h"
+#include "zb_node.h"
+#include "ss_154.h"
 #include "ss_devices.h"
 #include "ss_lora.h"
 #include "ss_nodes.h"
@@ -164,7 +166,7 @@ static bool unpaired = false;          // node: no cluster key yet
 
 // Standalone + master: the device table and the user's category choice.
 static DeviceTable* table = nullptr;
-static uint16_t userCats = kAllCategoriesMask;
+static CatMask userCats = kDefaultCategoriesMask;
 
 // Master
 static NodeRegistry nodes;
@@ -208,6 +210,7 @@ static uint32_t bleRestarts = 0;          // BLE scan found stopped and started 
 #endif
 static volatile bool bleOffBand = false;  // C5 sharing: Bluetooth off while Wi-Fi is on 5 GHz
 static uint32_t bleBlocks = 0;            // C5 sharing: Bluetooth blocks started
+static uint32_t zbBlocks = 0;             // C5 node: 802.15.4 (Smart home) blocks started
 
 // ---------------------------------------------------------------------------
 // USB serial self-heal (C5 / S3 built-in USB). Seen twice on the master: after the web
@@ -293,6 +296,27 @@ static void gpsBegin() {
 }
 static void gpsPoll(uint32_t now) {
   while (Serial1.available()) gps.feed((char)Serial1.read(), now);
+}
+// GPS jamming / spoofing watch: a snapshot a second; an alarm waits here for flushReports.
+static GpsWatch gpsWatch;
+static Event gpsEvent;
+static bool gpsEventReady = false;
+static void gpsWatchTick(uint32_t now) {
+  static uint32_t last = 0;
+  if (now - last < 1000) return;
+  last = now;
+  GpsSnap s;
+  gpsSnapshot(gps, now, s);
+  Event ev;
+  if (gpsWatch.update(s, now, ev)) {
+    memcpy(ev.src, myMac, 6);
+    gpsEvent = ev;
+    gpsEventReady = true;
+    if (ev.type == EV_GPS_JAM)
+      Out.printf("[gps] JAMMING: satellites dropped %u dB under normal (%u tracked, now %u)\n", ev.count, ev.channel, ev.dst[0]);
+    else
+      Out.printf("[gps] SPOOFING suspected: %s (%u)\n", gpsSpoofWhyName(ev.channel), ev.count);
+  }
 }
 static uint8_t gpsState(uint32_t now) { return gps.state(now); }
 #else
@@ -433,7 +457,7 @@ static uint8_t nodeSlot = 0xFF;
 
 // Local scanner (every role)
 static Config cfg;                         // current scan assignment
-static volatile uint16_t catMask = 0;      // read in radio callbacks
+static volatile CatMask catMask = 0;      // read in radio callbacks
 static volatile int8_t rssiFloor = -95;
 // The cluster's link channel (ESP-NOW and the Wi-Fi page): 1, 6 or 11, saved as "lch".
 // The master can move it (automatically, or from the page); nodes follow, and a node that
@@ -616,6 +640,11 @@ static void onPromisc(void* buf, wifi_promiscuous_pkt_type_t type) {
       flood.onFrame(f, ch, millis());
       portEXIT_CRITICAL(&floodMux);
     }
+    // Action frames that say who sent them: AWDL (Apple) and Wi-Fi Direct
+    if ((f.awdl || f.p2p) && roleWantsWifi() && rssi >= rssiFloor && !macIsMulticast(f.addr2)) {
+      const Match m = classifyWifi(f);
+      if (catMask & catBit(m.category)) enqueue(makeWifiSighting(f, m, ch, rssi), nullptr, 0);
+    }
     return;
   }
   if (!roleWantsWifi() || rssi < rssiFloor || macIsMulticast(f.addr2)) return;
@@ -768,8 +797,8 @@ static void applyConfig(const Config& c) {
   catMask = c.category_mask;
   rssiFloor = c.rssi_floor;
   if (bleChanged) applyBleDuty();
-  Out.printf("[%s] scan plan v%u role=%s cats=0x%04X channels=%u dwell=%u report=%u ble=%u%%\n",
-                runRoleName(runRole), c.cfg_version, roleName(c.role), c.category_mask,
+  Out.printf("[%s] scan plan v%u role=%s cats=0x%05lX channels=%u dwell=%u report=%u ble=%u%%\n",
+                runRoleName(runRole), c.cfg_version, roleName(c.role), (unsigned long)c.category_mask,
                 channelCount(c.channel_mask), c.dwell_ms, c.report_ms, c.ble_duty_pct);
 }
 
@@ -780,7 +809,7 @@ static void nodeDefaultConfig() {
   // Unpaired: nothing to report to, so keep the radio on the home channel listening for
   // a master's pairing offer (no Bluetooth scanning taking turns with it).
   c.role = unpaired ? ROLE_WIFI : ROLE_BOTH;
-  c.category_mask = kAllCategoriesMask;
+  c.category_mask = kDefaultCategoriesMask;
   c.channel_mask = 0;
   c.ble_duty_pct = unpaired ? 0 : 70;
   c.report_ms = 1000;
@@ -839,9 +868,9 @@ static void saveAndReboot(const char* why) {
   ESP.restart();
 }
 
-static void setCats(uint16_t m) {
+static void setCats(CatMask m) {
   userCats = m & kAllCategoriesMask;
-  prefs.putUShort("cats", userCats);
+  prefs.putULong("catm", userCats);
   if (runRole == RUN_MASTER) needAssign = true;
   applyLocalPlan();
 }
@@ -1730,6 +1759,9 @@ static void flushReports(uint32_t now) {
 #ifdef SS_SUBGHZ
   if (!fire) fire = subghz::pollEvent(ev);
 #endif
+#ifdef SS_GPS
+  if (!fire && gpsEventReady) { ev = gpsEvent; gpsEventReady = false; fire = true; }
+#endif
   if (hasTable()) {
     // Straight into the local table (master: as slot 0).
     const uint8_t slot = runRole == RUN_MASTER ? kLocalSlot : 0;
@@ -1797,6 +1829,10 @@ static void emitStatus(uint32_t now) {
   Out.printf(",\"heap_big\":%lu,\"psram\":%lu,\"psram_free\":%lu", (unsigned long)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024),
              (unsigned long)(psramTotal() / 1024), (unsigned long)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
   Out.printf(",\"ble_blocks\":%lu", (unsigned long)bleBlocks);
+  if (zb::ready())
+    Out.printf(",\"zb\":{\"blocks\":%lu,\"frames\":%lu,\"reported\":%lu,\"dropped\":%lu,\"ch\":%u}",
+               (unsigned long)zbBlocks, (unsigned long)zb::frames(), (unsigned long)zb::reported(),
+               (unsigned long)zb::dropped(), zb::channel());
   if (bleMin.valid)   // the last full minute: % of it the scan ran, adverts, starts/stops, stops to talk to the master, ends on its own
     Out.printf(",\"ble_min\":{\"on\":%u,\"adv\":%lu,\"starts\":%lu,\"stops\":%lu,\"talk\":%lu,\"ends\":%lu}", bleMin.on_pct,
                (unsigned long)bleMin.adv, (unsigned long)bleMin.starts, (unsigned long)bleMin.stops,
@@ -1819,10 +1855,10 @@ static void emitStatus(uint32_t now) {
     Out.printf(",\"mode\":\"%s\",\"mslot\":%u,\"mhz\":%.4f,\"slot\":%u}", loraModeName(lora::mode()), lora::slot(), ls.mhz, ls.slot);
   }
 #endif
-  Out.printf(",\"id\":\"%04X\",\"key\":%s,\"ms\":%lu,\"cats\":%u,\"ch\":%u,\"channels\":%u,\"ble_duty\":%u,"
+  Out.printf(",\"id\":\"%04X\",\"key\":%s,\"ms\":%lu,\"cats\":%lu,\"ch\":%u,\"channels\":%u,\"ble_duty\":%u,"
                 "\"wifi_frames\":%lu,\"ble_adv\":%lu,\"drops\":%lu",
                 myId, espLink.hasKey() || clusterKey.length() ? "true" : "false", (unsigned long)now,
-                hasTable() ? userCats : catMask, curChannel, channelCount(cfg.channel_mask), cfg.ble_duty_pct,
+                (unsigned long)(hasTable() ? userCats : catMask), curChannel, channelCount(cfg.channel_mask), cfg.ble_duty_pct,
                 (unsigned long)wifiFrames, (unsigned long)bleAdvs, (unsigned long)(queueDrops + droppedShown));
 
   if (runRole != RUN_NODE) {
@@ -2257,7 +2293,7 @@ static void handleLine(String line, uint32_t now) {
     g_jsonOn = j;
   } else if (hasTable() && line == "cats all") { setCats(kAllCategoriesMask);
   } else if (hasTable() && line == "cats surv") { setCats(kSurveillanceMask);
-  } else if (hasTable() && line.startsWith("cats ")) { setCats((uint16_t)strtoul(line.c_str() + 5, nullptr, 16));
+  } else if (hasTable() && line.startsWith("cats ")) { setCats((CatMask)strtoul(line.c_str() + 5, nullptr, 16));
   } else if (hasTable() && line == "devices") { dumpDevices(*table, now);
   } else if (hasTable() && line.startsWith("aps ")) { emitAccessPointGroup(*table, strtoul(line.c_str() + 4, nullptr, 10), now);
   } else if (hasTable() && line.startsWith("info ")) { emitDeviceInfo(*table, strtoul(line.c_str() + 5, nullptr, 10), now);
@@ -2539,12 +2575,17 @@ void setup() {
   }
   unpaired = runRole == RUN_NODE && !clusterKey.length();
   corePinned = prefs.isKey("core") && prefs.getBytes("core", pinnedCore, 6) == 6;
-  userCats = prefs.isKey("cats") ? prefs.getUShort("cats", kAllCategoriesMask) : kAllCategoriesMask;
-  if (prefs.getUChar("catv", 1) < 3) {   // categories added since this board saved its choice start on
-    if (prefs.getUChar("catv", 1) < 2) userCats |= catBit(CAT_VEHICLE);
-    userCats |= catBit(CAT_SUBGHZ);
-    prefs.putUChar("catv", 3);
-    if (prefs.isKey("cats")) prefs.putUShort("cats", userCats);
+  // Saved as 32 bits ("catm") since 2.1.6; "cats" (16 bits) before that.
+  userCats = prefs.isKey("catm")   ? (CatMask)prefs.getULong("catm", kDefaultCategoriesMask)
+             : prefs.isKey("cats") ? (CatMask)prefs.getUShort("cats", (uint16_t)kDefaultCategoriesMask)
+                                   : kDefaultCategoriesMask;
+  if (prefs.getUChar("catv", 1) < 4) {   // categories added since this board saved its choice start on
+    const uint8_t v = prefs.getUChar("catv", 1);
+    if (v < 2) userCats |= catBit(CAT_VEHICLE);
+    if (v < 3) userCats |= catBit(CAT_SUBGHZ);
+    userCats |= catBit(CAT_CAMERA);
+    prefs.putUChar("catv", 4);
+    if (prefs.isKey("cats") || prefs.isKey("catm")) { prefs.putULong("catm", userCats); prefs.remove("cats"); }
   }
   assignMode = (AssignMode)(prefs.isKey("mode") ? prefs.getUChar("mode", (uint8_t)ASSIGN_SPLIT) : (uint8_t)ASSIGN_SPLIT);
   localScan = prefs.isKey("local") ? prefs.getBool("local", true) : true;
@@ -2663,7 +2704,24 @@ void setup() {
   gpsBegin();
 #endif
 #ifdef SS_SUBGHZ
-  Out.printf("[subghz] CC1101 band watch %s\n", subghz::begin(&catMask) ? "ready (314.35 / 315 / 345 / 390 / 433.92 / 915 MHz, receive only)" : "FAILED (radio not found)");
+  {
+    const bool cc = subghz::begin(&catMask);
+    Out.printf("[subghz] CC1101 band watch %s\n", cc ? "ready (314.35 / 315 / 345 / 390 / 433.92 / 915 MHz, receive only)" : "FAILED (radio not found)");
+#ifdef SS_DISPLAY_TEMBED
+    display::bootStep("Radios", "Wi-Fi + Bluetooth", 1);
+    display::bootStep("Sub-GHz", cc ? "CC1101 ready" : "CC1101 not found", cc ? 1 : 0);
+    {
+      char b[24];
+      if (battPct <= 100) snprintf(b, sizeof(b), "%u%%", battPct);
+      else snprintf(b, sizeof(b), "%s", battPct == 254 ? "on USB" : "none");
+      display::bootStep("Battery", b, battPct <= 100 ? (battPct >= 20 ? 1 : 0) : 2);
+      if (clusterKey.length()) snprintf(b, sizeof(b), "paired");
+      display::bootStep("Cluster", clusterKey.length() ? b : "not paired yet", clusterKey.length() ? 1 : 0);
+      snprintf(b, sizeof(b), "%08lu", (unsigned long)(20000000UL + ssBuildStamp / 10000UL));
+      display::bootStep("Built", b, 2);
+    }
+#endif
+  }
 #endif
 #ifdef SS_LORA
   Out.printf("[lora] 915 MHz listener %s\n", lora::begin(&loraSink, &catMask) ? "ready (Meshtastic, MeshCore, LoRaWAN; receive only)" : "FAILED (radio not found)");
@@ -2685,7 +2743,7 @@ void setup() {
   rtcStuckCtx[0] = 0;
   Out.printf("[%s] started: %s, free heap %lu KB\n", runRoleName(runRole), resetWhyName(bootWhy),
              (unsigned long)(ESP.getFreeHeap() / 1024));
-  if (table) Out.printf("[%s] table %u devices, cats 0x%04X\n", runRoleName(runRole), (unsigned)table->capacity(), userCats);
+  if (table) Out.printf("[%s] table %u devices, cats 0x%05lX\n", runRoleName(runRole), (unsigned)table->capacity(), (unsigned long)userCats);
 }
 
 static void drainHits(uint32_t now) {
@@ -2833,13 +2891,64 @@ static bool bleShare(uint32_t now, uint64_t chans) {
   return false;
 }
 
+// C5 nodes with Smart home on: 802.15.4 (Zigbee / Thread) gets the radio for a short
+// block of each cycle, one channel per block. Blocks alternate between sweeping the 16
+// channels and going back to the busiest one heard, so the networks around are found
+// in a few minutes and then heard regularly. Wi-Fi stays home (and stops capturing)
+// during a block; the master never does this, it keeps the link.
+static bool zbWanted() {
+  return runRole == RUN_NODE && paired && (catMask & catBit(CAT_SMARTHOME)) && zb::supported();
+}
+static void zbEnd() {
+  if (!zb::listening()) return;
+  zb::stop();
+  if (roleWantsWifi()) esp_wifi_set_promiscuous(true);
+}
+static bool zbShare(uint32_t now) {
+  constexpr uint32_t kCycleMs = 15000, kBlockMs = 1500;   // 10% of the radio
+  static uint32_t cycleStart = 0;
+  static bool tried = false;
+  static uint8_t sweep = 0;
+  if (!zbWanted()) { zbEnd(); return false; }
+  if (!zb::ready()) {
+    if (tried) return false;
+    tried = true;
+    const bool ok = zb::begin();
+    Out.printf("[zb] 802.15.4 (Zigbee / Thread) listening %s\n", ok ? "ready: 1.5 s of each 15 s, receive only" : "FAILED to start");
+    if (!ok) return false;
+  }
+  if (now - cycleStart >= kCycleMs) cycleStart = now;
+  if (now - cycleStart < kBlockMs) {
+    if (!zb::listening()) {
+      goHome();
+      esp_wifi_set_promiscuous(false);
+      uint8_t ch = (uint8_t)(k154First + sweep);
+      if (zbBlocks & 1) {   // every other block: the busiest channel so far
+        uint32_t best = 0;
+        for (uint8_t c = k154First; c <= k154Last; ++c)
+          if (zb::heardOn(c) > best) { best = zb::heardOn(c); ch = c; }
+      }
+      if (!(zbBlocks & 1)) sweep = (uint8_t)((sweep + 1) % (k154Last - k154First + 1));
+      zb::listen(ch);
+      ++zbBlocks;
+    }
+    return true;
+  }
+  zbEnd();
+  return false;
+}
+static void zbSink(const Sighting& s, const char* name, uint8_t len) {
+  if (catMask & catBit(s.category)) enqueue(s, name, len);
+}
+
 static void hop(uint32_t now) {
   const uint64_t chans = roleWantsWifi() ? cfg.channel_mask : 0;
   // A node doesn't leave the master's channel while frames to it are still going out
   // (leaving with Long Range frames waiting is the suspect for frames that never finish).
   // checkStuckTx() clears the link if they truly hang.
   const bool sending = runRole == RUN_NODE && espLink.inFlight();
-  if (bleShare(now, chans)) return;   // C5: Bluetooth's block, Wi-Fi stays home
+  if (bleShare(now, chans)) { zbEnd(); return; }   // C5: Bluetooth's block, Wi-Fi stays home
+  if (zbShare(now)) return;                          // C5 node: 802.15.4's block, Wi-Fi stays home
   if (chans && !sending && (int32_t)(now - lastHop) >= (int32_t)cfg.dwell_ms) {
     const uint8_t ch = nextChannel(chans, &hopCursor);
     if (ch && ch != curChannel && setRadioChannel(ch)) curChannel = ch;
@@ -3010,7 +3119,9 @@ static void loopNode(uint32_t now) {
       }
     }
   }
+  zb::poll(&zbSink, rssiFloor);
   if (now - lastReport >= cfg.report_ms || (batch.full() && now - lastReport >= kMinReportGapMs)) {
+    zbEnd();   // the radio back to Wi-Fi alone while talking to the master
     goHome();
     const uint32_t every = cfg.cfg_version ? kHeartbeatEveryMs : kUnconfiguredBeatMs;
     talkToMaster(&flushAndBeat, now - lastHeartbeat >= every ? kBeatListenMs : kListenWindowMs);
@@ -3159,6 +3270,7 @@ void loop() {
   handleSerial(now);
 #ifdef SS_GPS
   gpsPoll(now);
+  gpsWatchTick(now);
 #endif
   phaseMs[LP_SERIAL] += millis() - t0; t0 = millis();
   if (apActive) portal::loop();

@@ -131,6 +131,39 @@ static const uint16_t kCoChipolo = 0x08C3;
 static const uint16_t kEddystoneUuid = 0xFEAA;  // Google Find Hub (FMDN) frames 0x40 / 0x41
 static const uint16_t kDultUuid = 0xFCB2;       // cross-vendor unwanted-tracking spec
 static const uint16_t kFindMyAccessoryUuid = 0xFD44;   // Apple: Find My network accessories
+// Wi-Fi Alliance P2P (Wi-Fi Direct) vendor element: OUI 50:6F:9A, type 9
+static const uint32_t kWfaP2pVendor = 0x506F9A09u;
+
+// More Bluetooth makers (2.1.6). Company ids from the Bluetooth SIG list; GoPro's two
+// service UUIDs (0xFEA5, 0xFEA6) from its member UUID list.
+static const uint16_t kCoGoPro = 0x02F2;
+static const uint16_t kGoProUuids[] = {0xFEA5, 0xFEA6};
+static const uint16_t kCameraMakersBle[] = {
+  0x0870,  // Wyze Labs
+  0x03D5,  // Wyzelink Systems
+  0x0C19,  // Arlo Technologies
+};
+static const uint16_t kCarMakersBle[] = {   // phone-as-key and app links in cars
+  0x0068,  // General Motors
+  0x011F,  // Volkswagen
+  0x017C,  // Mercedes-Benz
+  0x05EB,  // BMW
+  0x0723,  // Ford
+  0x0826,  // Hyundai
+  0x0915,  // Honda
+  0x0941,  // Rivian
+  0x0977,  // Toyota
+  0x0A10,  // Subaru
+  0x0BA6,  // Nissan
+  0x10BC,  // Harley-Davidson
+  0x0501,  // Polaris
+};
+static const uint16_t kEbikeScooterMakers[] = {
+  0x0F1F,  // Ninebot (Segway-Ninebot scooters)
+  0x0A4F,  // VanMoof
+  0x044A,  // Shimano (e-bike drive units, Di2)
+};
+static const uint16_t kCoAmazon = 0x0171;   // Amazon.com Services
 
 // Audio / wearables
 static const uint16_t kFastPairUuid = 0xFE2C;
@@ -149,6 +182,9 @@ static const uint16_t kAudioMakers[] = {
   0x07C9,  // Skullcandy
   0x0CE9,  // JLab Audio
   0x10AE,  // Raycon
+  0x0055,  // Plantronics (Poly headsets)
+  0x0089,  // GN Hearing A/S (ReSound hearing aids)
+  0x05A7,  // Sonos
 };
 static const uint16_t kWearableMakers[] = {
   0x009F,  // Suunto

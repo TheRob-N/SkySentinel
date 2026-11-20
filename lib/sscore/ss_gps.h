@@ -76,6 +76,71 @@ class Nmea {
 struct GpsInfo;
 void fillGpsInfo(const Nmea& g, uint32_t now_ms, GpsInfo& out);
 
+// ---------------------------------------------------------------------------
+// GPS jamming and spoofing (2.1.6). Fed a snapshot of the receiver once a second.
+//
+// Jamming drowns the satellites: their signal-to-noise falls together, the receiver loses
+// count of them and then the fix, while it keeps talking. Spoofing replaces them with one
+// transmitter's fakes: the position or the clock jumps, every "satellite" arrives equally
+// strong, or stronger than real satellites can be from orbit.
+//
+// Limits: a garage, tunnel or thick roof also hides the sky (stationary boards are the
+// reliable ones), and a careful spoofer that takes the receiver over slowly won't trip it.
+struct GpsSnap {
+  bool alive = false;        // NMEA still coming
+  uint8_t state = GPS_NONE;
+  uint8_t tracked = 0;       // satellites with a signal (SNR > 0)
+  uint8_t used = 0;          // in the fix
+  float top4 = 0;            // mean SNR (dB-Hz) of the 4 strongest, 0 = fewer than 4
+  float spread = 0;          // strongest minus weakest SNR among tracked (dB), 0 = fewer than 6
+  bool has_pos = false;
+  double lat = 0, lon = 0;
+  bool has_utc = false;
+  uint32_t utc = 0;
+};
+void gpsSnapshot(const Nmea& g, uint32_t now_ms, GpsSnap& out);
+
+enum GpsSpoofWhy : uint8_t {
+  SPOOF_JUMP = 1,     // position moved faster than anything on the ground (count = km/h)
+  SPOOF_CLOCK = 2,    // the receiver's clock jumped against ours (count = seconds)
+  SPOOF_UNIFORM = 3,  // every satellite equally strong: one transmitter (count = spread x 10, dB)
+  SPOOF_STRONG = 4,   // stronger than satellites can be from orbit (count = dB-Hz)
+};
+const char* gpsSpoofWhyName(uint8_t why);   // "position jump", ...
+
+struct Event;
+class GpsWatch {
+ public:
+  // Once a second. Returns true with `out` filled when it raises an alarm
+  // (EV_GPS_JAM / EV_GPS_SPOOF, see ss_proto.h for the fields).
+  bool update(const GpsSnap& s, uint32_t now_ms, Event& out);
+  bool jammed() const { return jammed_; }
+  float baseline() const { return base_; }       // healthy top-4 SNR, 0 until learned
+  uint32_t alarms() const { return alarms_; }
+  static constexpr float kJamDropDb = 10;        // signals this far under normal ...
+  static constexpr uint32_t kJamHoldMs = 10000;  // ... for this long
+  static constexpr uint32_t kRearmMs = 600000;   // one alarm of a kind per 10 minutes
+ private:
+  float base_ = 0;
+  uint32_t base_n_ = 0;
+  uint8_t base_tracked_ = 0;
+  float base_trk_ = 0;
+  uint32_t low_since_ = 0;
+  bool jammed_ = false;
+  uint32_t ok_since_ = 0;
+  uint32_t last_[5] = {0, 0, 0, 0, 0};   // last alarm per kind: [0] jam, [why] spoof
+  bool had_pos_ = false;
+  double lat_ = 0, lon_ = 0;
+  uint32_t pos_ms_ = 0;
+  bool had_utc_ = false;
+  int64_t utc_off_ = 0;      // receiver UTC minus our seconds
+  uint32_t alarms_ = 0;
+  bool rearmed(uint8_t k, uint32_t now_ms) const { return !last_[k] || now_ms - last_[k] >= kRearmMs; }
+};
+
+// Great-circle distance in meters.
+double gpsDistanceM(double lat1, double lon1, double lat2, double lon2);
+
 // Days-from-civil: Unix seconds for a UTC date and time (year >= 1970).
 uint32_t unixTime(int year, int month, int day, int hour, int min, int sec);
 // "2026-10-30 15:04:05" (20 bytes with the terminator)

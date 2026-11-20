@@ -91,7 +91,7 @@ class NodeRegistry {
   // Drops a node from the list (it can join again by saying hello).
   void forget(int slot);
   // Recomputes every online node's Config. Bumps the config version.
-  void assign(uint16_t category_mask, AssignMode mode);
+  void assign(CatMask category_mask, AssignMode mode);
 
   // Keeps a slot out of use (the master's own radio reports as slot 0).
   void reserve(int slot, bool on = true) {

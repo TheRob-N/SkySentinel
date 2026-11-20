@@ -13,7 +13,8 @@ const char kLogCsvHeader[] = "time_utc,uptime_s,lat,lon,kind,category,signature,
 
 const char* logKindName(uint8_t k) {
   static const char* const n[] = {"", "start", "device", "following", "lingering", "deauth_flood",
-                                  "disassoc_flood", "ble_spam", "track", "wifi_spam", "evil_twin", "rf_jam"};
+                                  "disassoc_flood", "ble_spam", "track", "wifi_spam", "evil_twin", "rf_jam",
+                                  "gps_jam", "gps_spoof"};
   return k < sizeof(n) / sizeof(n[0]) ? n[k] : "";
 }
 
@@ -81,6 +82,10 @@ size_t formatLogCsv(const LogRec& r, char* out, size_t cap) {
     case LK_WIFI_SPAM: snprintf(detail, sizeof(detail), "fake_networks=%u", r.a); break;
     case LK_EVIL_TWIN: snprintf(detail, sizeof(detail), "network_names=%u", r.a); break;
     case LK_RF_JAM: snprintf(detail, sizeof(detail), "mhz=%u.%02u db_over_floor=%u", r.a / 100, r.a % 100, r.b); break;
+    case LK_GPS_JAM:
+      snprintf(detail, sizeof(detail), "db_lost=%u sats=%u->%u", r.a, r.b >> 8, r.b & 0xFF);
+      break;
+    case LK_GPS_SPOOF: snprintf(detail, sizeof(detail), "why=%s value=%u", gpsSpoofWhyName((uint8_t)r.b), r.a); break;
     case LK_START: snprintf(detail, sizeof(detail), "boot=%u", r.a); break;
     default: break;
   }

@@ -101,13 +101,13 @@ static void buildColors() {
   static const uint8_t c[CAT_COUNT][3] = {
     {128, 128, 128}, {255, 107, 94}, {255, 149, 64}, {242, 169, 59}, {199, 125, 255}, {72, 201, 232},
     {255, 214, 10}, {61, 220, 151}, {138, 164, 186}, {150, 180, 255}, {120, 200, 200}, {120, 140, 160},
-    {120, 140, 160}, {180, 220, 120}, {255, 170, 90}, {90, 160, 255},
+    {120, 140, 160}, {180, 220, 120}, {255, 170, 90}, {90, 160, 255}, {230, 120, 190}, {140, 210, 170},
   };
   for (uint8_t i = 0; i < CAT_COUNT; ++i) catColor[i] = rgb(c[i][0], c[i][1], c[i][2]);
 }
 static const char* const kCatShort[CAT_COUNT] = {
   "", "ALPR", "BODY CAM", "TRACKER", "GLASSES", "DRONE", "SKIMMER", "PENTEST",
-  "PHONES", "AUDIO", "WEARABLE", "OTHER BT", "WI-FI", "LORA", "VEHICLE", "SUB-GHZ",
+  "PHONES", "AUDIO", "WEARABLE", "OTHER BT", "WI-FI", "LORA", "VEHICLE", "SUB-GHZ", "CAMERA", "ZIGBEE",
 };
 static_assert(sizeof(kCatShort) / sizeof(kCatShort[0]) == CAT_COUNT, "a short name for every category");
 static const uint8_t kTileCats[8] = {CAT_FLOCK, CAT_BODYCAM, CAT_TRACKER, CAT_GLASSES,
@@ -585,7 +585,7 @@ static uint32_t dashMs_ = 0;
 static uint16_t ackedSeq_ = 0;       // alert the user tapped away
 static uint16_t seenSeq_ = 0;
 static bool firstDash_ = true;
-static uint16_t pendingCats_ = 0;    // tile taps not yet confirmed by the master (xor mask)
+static CatMask pendingCats_ = 0;    // tile taps not yet confirmed by the master (xor mask)
 static uint32_t pendingCatsMs_ = 0;
 
 static DashCommand cmdQ_[4];
@@ -1670,7 +1670,7 @@ void bootStep(const char* what, const char* result, uint8_t ok) {
 void onDash(const Dash& d, uint32_t now) {
   // Tile taps stay shown as tapped until the master's mask agrees (or 5 s pass).
   if (pendingCats_) {
-    const uint16_t settled = (uint16_t)~(dash_.cats ^ d.cats);   // bits the master didn't change
+    const CatMask settled = ~(dash_.cats ^ d.cats);   // bits the master didn't change
     if (now - pendingCatsMs_ > 5000) pendingCats_ = 0;
     else pendingCats_ &= settled;
   }

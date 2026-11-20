@@ -23,6 +23,8 @@ enum LogKind : uint8_t {
   LK_WIFI_SPAM = 9,  // beacon flood: fake Wi-Fi networks from one transmitter
   LK_EVIL_TWIN = 10, // one radio answering as many network names (Pineapple-style)
   LK_RF_JAM = 11,    // a sub-GHz band jammed (T-Embed CC1101)
+  LK_GPS_JAM = 12,   // GPS signals drowned (Heltec): a = dB lost, b = satellites before << 8 | now
+  LK_GPS_SPOOF = 13, // GPS saying something it can't: a = detail, b = GpsSpoofWhy
 };
 const char* logKindName(uint8_t k);  // "start", "device", "following", ...
 

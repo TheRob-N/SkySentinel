@@ -36,16 +36,18 @@ static WifiNeed wifiNeedFor(uint8_t cat) {
     case CAT_PHONE:      return NEED_ALL;  // probe requests on both bands
     case CAT_OTHER_WIFI: return NEED_ALL;
     case CAT_VEHICLE:    return NEED_24;   // car hotspots (and Bluetooth below)
+    case CAT_CAMERA:     return NEED_24;   // home cameras and doorbells: almost all 2.4 GHz
     default:             return NEED_NONE; // BLE-only categories
   }
 }
 
-// LoRa is handled by a sub-GHz node, so it needs neither BLE nor Wi-Fi time here.
+// LoRa is handled by a sub-GHz node, and Smart home by a C5 node's 802.15.4 listening, so
+// they need neither BLE nor Wi-Fi time here.
 static bool needsBle(uint8_t cat) {
-  return cat != CAT_OTHER_WIFI && cat != CAT_NONE && cat != CAT_LORA && cat != CAT_SUBGHZ;
+  return cat != CAT_OTHER_WIFI && cat != CAT_NONE && cat != CAT_LORA && cat != CAT_SUBGHZ && cat != CAT_SMARTHOME;
 }
 
-ScanPlan planForCategories(uint16_t category_mask) {
+ScanPlan planForCategories(CatMask category_mask) {
   ScanPlan p;
   WifiNeed need = NEED_NONE;
   bool ble = false;

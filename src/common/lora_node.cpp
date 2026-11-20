@@ -24,7 +24,7 @@ namespace lora {
 
 static SX1262 radio = new Module(SS_LORA_NSS, SS_LORA_DIO1, SS_LORA_RST, SS_LORA_BUSY);
 static Sink sink_ = nullptr;
-static volatile uint16_t* cats_ = nullptr;
+static volatile CatMask* cats_ = nullptr;
 static bool ready_ = false;
 static Stats stats_;
 static portMUX_TYPE statsMux = portMUX_INITIALIZER_UNLOCKED;
@@ -232,7 +232,7 @@ void setMode(uint8_t mode, uint8_t slot) {
 uint8_t mode() { return mode_; }
 uint8_t slot() { return slot_; }
 
-bool begin(Sink sink, volatile uint16_t* category_mask) {
+bool begin(Sink sink, volatile CatMask* category_mask) {
   sink_ = sink;
   cats_ = category_mask;
 #ifdef SS_VEXT_CTRL

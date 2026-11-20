@@ -22,7 +22,7 @@ namespace lora {
 using Sink = void (*)(const Sighting& s, const char* name, uint8_t name_len, uint8_t what);
 
 // enabled is read each cycle (the board's category mask has CAT_LORA set).
-bool begin(Sink sink, volatile uint16_t* category_mask);
+bool begin(Sink sink, volatile CatMask* category_mask);
 bool ready();
 // mode = ss::LoraMode (ss_lora.h); slot = Meshtastic frequency slot, 1-based, 0 = default.
 void setMode(uint8_t mode, uint8_t slot);

@@ -24,7 +24,7 @@ void dashLabel(const Device& d, char* out, size_t cap) {
   snprintf(out, cap, "%s", d.name[0] ? d.name : sigName(d.sig_id));
 }
 
-void buildDash(const DeviceTable& table, uint32_t now_ms, uint16_t cats, Dash& out) {
+void buildDash(const DeviceTable& table, uint32_t now_ms, CatMask cats, Dash& out) {
   out.cats = cats;
   // One pass for every category's "now" count (was a pass per category plus one for the
   // total: ~17 walks of a 2048-entry table in slow PSRAM, for every dashboard, every second).
@@ -77,7 +77,7 @@ void buildDash(const DeviceTable& table, uint32_t now_ms, uint16_t cats, Dash& o
 
 static uint8_t radioOf(const Device& d) { return d.radio <= 4 ? d.radio : 0; }
 
-void buildDeviceView(const DeviceTable& table, uint32_t now_ms, uint16_t cats, uint16_t offset, DashDevices& out) {
+void buildDeviceView(const DeviceTable& table, uint32_t now_ms, CatMask cats, uint16_t offset, DashDevices& out) {
   out = DashDevices();
   out.offset = offset;
   auto listed = [&](const Device& d) {

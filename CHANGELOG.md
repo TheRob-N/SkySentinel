@@ -1,5 +1,36 @@
 # Changelog
 
+## 2.1.6 (2026-11-20)
+
+Flash every board, master included: categories are 32 bits now, and the master is what
+carries the new ones to the nodes. A 2.1.5 board still works in the cluster; it just
+won't report Cameras or Smart home.
+
+- **T-Embed boot screen,** like the CYD's: the big SkySentinel logo, then a line for each
+  thing that started (radios, the CC1101, battery, pairing, build date) and the release.
+  It stays up 3 s after the last line, or until the wheel or a button is touched.
+- **More detection sources** (details in [docs/detection.md](docs/detection.md)):
+  - **Wi-Fi Direct and Apple AWDL** on every Wi-Fi node: iPhones, iPads and Macs doing
+    AirDrop / AirPlay (Phones), and printers, TVs and phones sharing over Wi-Fi Direct.
+  - **More Bluetooth makers:** GoPro, Wyze and Arlo (Cameras); 13 car makers' phone keys
+    and app links; Segway-Ninebot, VanMoof and Shimano e-bikes and scooters (Vehicles);
+    Poly / Plantronics, GN Hearing and Sonos (Audio); Amazon.
+  - **Smart home mesh: Zigbee and Thread / Matter** on the C5 nodes' 802.15.4 receiver, a
+    new category with its own radio filter on the device list. Off by default (it takes
+    10% of each C5 node's radio) and not yet tried on hardware.
+  - **GPS jamming and spoofing** on the Heltec: satellites drowned, the position or clock
+    jumping, or every satellite equally (or impossibly) strong. Red banner, detection
+    log, CYD alert.
+- **Cameras: a category of its own.** Ring, Hikvision, Verkada, Wyze, Arlo, Axis and
+  Blink now count as Cameras (their own tile, toggle and count), not ALPR or Other.
+  Genetec (AutoVu ALPR) stays ALPR. Cameras are weak matches, never alert alone, and
+  aren't counted as surveillance; they're on by default, including on a board upgrading
+  with saved category choices.
+- **Category masks are 32 bits** (were 16, and all 16 were taken). On the wire the extra
+  bits ride in an optional trailing field, so a 2.1.5 board still parses everything: a
+  2.1.5 node under a newer master never sees Cameras, and a newer node under a 2.1.5
+  master keeps Cameras on. Flash every board to get the category everywhere.
+
 ## 2.1.5 (2026-11-19)
 
 Flash every board, master included: the master is what counts a node's late retries
@@ -20,7 +51,7 @@ as delivered. A 2.1.4 master still works with 2.1.5 nodes, it just ignores their
 - **Classic nodes' stuck-frame check is progress-based**, like the C5 / S3 one: it restarts
   only when no frame has finished for 5 s, not whenever frames have been waiting that long.
 - The master's own scanning (`local on`) can stay on.
-- **More signatures, from Dragon Detector** (identifiers only; credits in the README and
+- **More signatures, from Dragon Detector** (identifiers only; credits in docs/detection.md and
   `ss_sigdata.h`):
   - Flock's BLE accessory service (128-bit UUID e8ccbb38-...), a strong ALPR match. 128-bit
     service UUIDs are now read from adverts, not just counted.

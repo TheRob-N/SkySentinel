@@ -155,7 +155,9 @@ void event(const Event& ev) {
   if (!started_) return;
   LogRec r;
   const uint8_t kind = ev.type == EV_BLE_SPAM ? LK_BLE_SPAM : ev.type == EV_WIFI_SPAM ? LK_WIFI_SPAM
-                     : ev.type == EV_EVIL_TWIN ? LK_EVIL_TWIN : ev.type == EV_RF_JAM ? LK_RF_JAM : ev.type == EV_DEAUTH_FLOOD ? LK_DEAUTH : LK_DISASSOC;
+                     : ev.type == EV_EVIL_TWIN ? LK_EVIL_TWIN : ev.type == EV_RF_JAM ? LK_RF_JAM
+                     : ev.type == EV_GPS_JAM ? LK_GPS_JAM : ev.type == EV_GPS_SPOOF ? LK_GPS_SPOOF
+                     : ev.type == EV_DEAUTH_FLOOD ? LK_DEAUTH : LK_DISASSOC;
   fill(r, kind, millis());
   r.has_mac = true;
   memcpy(r.mac, ev.src, 6);
@@ -165,6 +167,12 @@ void event(const Event& ev) {
   } else if (kind == LK_RF_JAM) {
     r.a = ev.count;
     r.b = ev.dst[0];
+  } else if (kind == LK_GPS_JAM) {
+    r.a = ev.count;
+    r.b = (uint16_t)((ev.channel << 8) | ev.dst[0]);
+  } else if (kind == LK_GPS_SPOOF) {
+    r.a = ev.count;
+    r.b = ev.channel;
   } else if (kind == LK_EVIL_TWIN) {
     r.a = ev.count;
     r.b = ev.channel;

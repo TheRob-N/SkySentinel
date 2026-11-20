@@ -155,7 +155,7 @@ static void splitWifi(NodeInfo* nodes, const int* online, int n, uint64_t mask) 
     if (channelCount(nodes[w24[k]].cfg.channel_mask) <= 1) nodes[w24[k]].cfg.dwell_ms = 1000;
 }
 
-void NodeRegistry::assign(uint16_t category_mask, AssignMode mode) {
+void NodeRegistry::assign(CatMask category_mask, AssignMode mode) {
   ++cfg_version_;
   if (cfg_version_ == 0) cfg_version_ = 1;  // 0 means "unassigned" on the node
   const ScanPlan plan = planForCategories(category_mask);

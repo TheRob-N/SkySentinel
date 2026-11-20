@@ -26,6 +26,7 @@
 #include "ss_classify.h"
 #include "subghz_node.h"
 #include "tembed_hw.h"
+#include "ss_version.h"
 
 namespace ss {
 namespace display {
@@ -37,6 +38,13 @@ static uint8_t page_ = 0, shown_ = 255;
 enum : uint8_t { P_HOME, P_ALERTS, P_BANDS, P_HISTORY, P_RECENT, P_HUNT, kPages };
 static Info info_;
 static bool haveInfo_ = false;
+// Boot screen (drawSplash, below)
+static bool splash_ = false;
+static uint32_t splashUntil_ = 0;
+static uint8_t splashLine_ = 0;
+static constexpr int kSplashTop = 84, kSplashRow = 13;
+static void drawSplash();
+static void text(int x, int y, uint8_t size, uint16_t fg, const char* s);
 static volatile int16_t encCount_ = 0;
 static volatile uint8_t encState_ = 0;
 
@@ -226,7 +234,22 @@ bool begin() {
   ring.clear();
   ring.show();
   ok_ = true;
+  drawSplash();
   return true;
+}
+
+void bootStep(const char* what, const char* result, uint8_t ok) {
+  if (!ok_ || !splash_ || splashLine_ >= 5) return;
+  tembed::SpiLock l;
+  const int y = kSplashTop + splashLine_ * kSplashRow;
+  ++splashLine_;
+  const int xw = 70, xr = 172;
+  text(xw, y, 1, MUTED, what);
+  for (int x = xw + (int)strlen(what) * 6 + 4; x < xr - 6; x += 4) tft.drawPixel(x, y + 6, PANEL);   // dotted leader
+  char r[25];
+  snprintf(r, sizeof(r), "%s", result);
+  text(xr, y, 1, ok == 1 ? OK : ok == 0 ? WARN : TEXT, r);
+  splashUntil_ = millis() + 3000;
 }
 
 void flip() {
@@ -777,13 +800,13 @@ static void ago(char* out, size_t n, uint32_t s) {
 
 // The logo (bold italic, SKY in blue): light text on black in the art, so brightness is
 // taken as coverage and blended onto `bg`, as the CYD does. Red at night, as the CYD's.
-static void drawLogo(int x, int y, uint16_t bg) {
+static void drawLogoArt(int x, int y, uint16_t bg, const uint16_t* art, int aw, int ah) {
   const uint8_t br = (uint8_t)(((bg >> 11) & 31) * 255 / 31), bgc = (uint8_t)(((bg >> 5) & 63) * 255 / 63),
                 bb = (uint8_t)((bg & 31) * 255 / 31);
-  uint16_t line[SKYLOGO_SMALL_W];
-  for (int yy = 0; yy < SKYLOGO_SMALL_H; ++yy) {
-    for (int xx = 0; xx < SKYLOGO_SMALL_W; ++xx) {
-      const uint16_t v = SKYLOGO_SMALL[yy * SKYLOGO_SMALL_W + xx];
+  uint16_t line[SKYLOGO_BIG_W];
+  for (int yy = 0; yy < ah; ++yy) {
+    for (int xx = 0; xx < aw; ++xx) {
+      const uint16_t v = art[yy * aw + xx];
       uint8_t r = (uint8_t)(((v >> 11) & 31) * 255 / 31), gg = (uint8_t)(((v >> 5) & 63) * 255 / 63),
               b = (uint8_t)((v & 31) * 255 / 31);
       if (set_.night) { const uint8_t l = r > gg ? (r > b ? r : b) : (gg > b ? gg : b); r = l; gg = (uint8_t)(l * 3 / 10); b = (uint8_t)(l / 5); }
@@ -792,8 +815,40 @@ static void drawLogo(int x, int y, uint16_t bg) {
       const uint8_t R = (uint8_t)(r + br * k / 255), G = (uint8_t)(gg + bgc * k / 255), B = (uint8_t)(b + bb * k / 255);
       line[xx] = rgb(R, G, B);
     }
-    g().drawRGBBitmap(x, y + yy - oy(), line, SKYLOGO_SMALL_W, 1);
+    g().drawRGBBitmap(x, y + yy - oy(), line, aw, 1);
   }
+}
+static void drawLogo(int x, int y, uint16_t bg) { drawLogoArt(x, y, bg, SKYLOGO_SMALL, SKYLOGO_SMALL_W, SKYLOGO_SMALL_H); }
+
+// ---------------------------------------------------------------------------
+// Boot screen, like the CYD's: the big logo, what started, the release. Stays up for
+// 3 s after the last step is added, or until the wheel or a button is touched.
+static void drawSplash() {
+  tembed::SpiLock l;
+  tft.fillScreen(BG);
+  drawLogoArt((W - SKYLOGO_BIG_W) / 2, 14, BG, SKYLOGO_BIG, SKYLOGO_BIG_W, SKYLOGO_BIG_H);
+  {   // subtitle (8-bit coverage art) in the accent colour
+    const uint8_t fr = (uint8_t)(((ACCENT >> 11) & 31) * 255 / 31), fg = (uint8_t)(((ACCENT >> 5) & 63) * 255 / 63),
+                  fb = (uint8_t)((ACCENT & 31) * 255 / 31);
+    const uint8_t br = (uint8_t)(((BG >> 11) & 31) * 255 / 31), bgc = (uint8_t)(((BG >> 5) & 63) * 255 / 63),
+                  bb = (uint8_t)((BG & 31) * 255 / 31);
+    uint16_t line[TXT_SUBTITLE_W];
+    const int x0 = (W - TXT_SUBTITLE_W) / 2, y0 = 52;
+    for (int yy = 0; yy < TXT_SUBTITLE_H; ++yy) {
+      for (int xx = 0; xx < TXT_SUBTITLE_W; ++xx) {
+        const uint16_t a = TXT_SUBTITLE[yy * TXT_SUBTITLE_W + xx], k = 255 - a;
+        line[xx] = rgb((uint8_t)((fr * a + br * k) / 255), (uint8_t)((fg * a + bgc * k) / 255), (uint8_t)((fb * a + bb * k) / 255));
+      }
+      tft.drawRGBBitmap(x0, y0 + yy, line, TXT_SUBTITLE_W, 1);
+    }
+  }
+  tft.drawFastHLine(60, 76, W - 120, PANEL);
+  char foot[48];
+  snprintf(foot, sizeof(foot), "SkySentinel %s  -  T-Embed CC1101 node", SS_RELEASE);
+  text((W - (int)strlen(foot) * 6) / 2, 158, 1, MUTED, foot);
+  splash_ = true;
+  splashLine_ = 0;
+  splashUntil_ = millis() + 3000;
 }
 
 static void header() {
@@ -1015,6 +1070,12 @@ static void pageHunt() {
 
 static void drawAll(bool full) {
   if (!ok_ || !on_) return;
+  if (splash_) {
+    if ((int32_t)(millis() - splashUntil_) < 0) return;   // boot screen still up
+    splash_ = false;
+    shown_ = 255;
+    full = true;
+  }
   tembed::SpiLock l;
   if (menu_) {
     const uint8_t id = 250 + menu_;
@@ -1153,6 +1214,7 @@ void tick(uint32_t now) {
   bool input = false;
   // Asleep by the timeout: the first touch only wakes the screen.
   auto wake = [&]() -> bool {
+    if (splash_) splashUntil_ = millis();   // a touch ends the boot screen
     lastInput = now;
     if (on_ || !offByTimeout) return false;
     offByTimeout = false;

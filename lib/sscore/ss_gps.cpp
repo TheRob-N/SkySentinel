@@ -1,5 +1,6 @@
 #include "ss_gps.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -280,6 +281,132 @@ void formatUtc(uint32_t t, char out[20]) {
            (unsigned long)(s / 60 % 60), (unsigned long)(s % 60));
   memcpy(out, tmp, 19);
   out[19] = '\0';
+}
+
+// ---------------------------------------------------------------------------
+// Jamming and spoofing
+
+void gpsSnapshot(const Nmea& g, uint32_t now_ms, GpsSnap& o) {
+  o = GpsSnap();
+  o.state = g.state(now_ms);
+  o.alive = o.state >= GPS_SEARCHING;
+  GpsSat v[48];
+  const size_t n = g.satellites(v, 48, now_ms);
+  uint8_t snr[48];
+  size_t k = 0;
+  for (size_t i = 0; i < n; ++i) {
+    if (!v[i].snr) continue;
+    snr[k++] = v[i].snr;
+    if (v[i].used) ++o.used;
+  }
+  o.tracked = (uint8_t)k;
+  for (size_t i = 1; i < k; ++i)   // strongest first
+    for (size_t j = i; j > 0 && snr[j] > snr[j - 1]; --j) { const uint8_t t = snr[j]; snr[j] = snr[j - 1]; snr[j - 1] = t; }
+  if (k >= 4) o.top4 = (snr[0] + snr[1] + snr[2] + snr[3]) / 4.0f;
+  if (k >= 6) o.spread = (float)(snr[0] - snr[k - 1]);
+  if (o.state >= GPS_FIX_2D) o.has_pos = g.position(o.lat, o.lon);
+  o.has_utc = g.utc(now_ms, o.utc);
+}
+
+const char* gpsSpoofWhyName(uint8_t why) {
+  switch (why) {
+    case SPOOF_JUMP: return "position jump";
+    case SPOOF_CLOCK: return "clock jump";
+    case SPOOF_UNIFORM: return "all satellites equally strong";
+    case SPOOF_STRONG: return "satellites too strong";
+    default: return "unknown";
+  }
+}
+
+double gpsDistanceM(double lat1, double lon1, double lat2, double lon2) {
+  const double kR = 6371000.0, d2r = 3.14159265358979323846 / 180.0;
+  const double dlat = (lat2 - lat1) * d2r, dlon = (lon2 - lon1) * d2r;
+  const double a = sin(dlat / 2) * sin(dlat / 2) + cos(lat1 * d2r) * cos(lat2 * d2r) * sin(dlon / 2) * sin(dlon / 2);
+  return 2 * kR * atan2(sqrt(a), sqrt(1 - a));
+}
+
+bool GpsWatch::update(const GpsSnap& s, uint32_t now, Event& ev) {
+  if (!s.alive) {   // receiver quiet (unplugged, rebooting): nothing to judge, start over
+    low_since_ = 0;
+    had_pos_ = had_utc_ = false;
+    return false;
+  }
+  const bool healthy = s.state >= GPS_FIX_2D && s.tracked >= 4 && s.top4 > 0;
+
+  // --- Jamming: the strongest satellites fall well under their normal level together,
+  // or almost all of them vanish, while the receiver keeps talking.
+  if (healthy && !jammed_) {   // learn what normal looks like (about the last 5 minutes)
+    base_ = base_n_ ? base_ + (s.top4 - base_) / (base_n_ < 300 ? (float)(base_n_ + 1) : 300.0f) : s.top4;
+    base_trk_ = base_n_ ? base_trk_ + (s.tracked - base_trk_) / 8.0f : s.tracked;
+    ++base_n_;
+    base_tracked_ = (uint8_t)(base_trk_ + 0.5f);
+  }
+  const bool learned = base_n_ >= 60 && base_ >= 30;
+  const float now4 = s.top4;   // 0 when fewer than 4 are left: counts as fully drowned
+  const bool low = learned && (now4 <= base_ - kJamDropDb || (s.tracked <= 1 && base_tracked_ >= 5));
+  if (low) {
+    if (!low_since_) low_since_ = now ? now : 1;
+    if (!jammed_ && now - low_since_ >= kJamHoldMs && rearmed(0, now)) {
+      jammed_ = true;
+      ok_since_ = 0;
+      last_[0] = now ? now : 1;
+      ++alarms_;
+      ev = Event();
+      ev.type = EV_GPS_JAM;
+      ev.channel = base_tracked_;
+      const float lost = base_ - now4;
+      ev.count = (uint16_t)(lost < 0 ? 0 : lost + 0.5f);
+      ev.dst[0] = s.tracked;
+      return true;
+    }
+  } else {
+    low_since_ = 0;
+    if (jammed_) {   // back to normal for a minute: over
+      if (!ok_since_) ok_since_ = now ? now : 1;
+      if (healthy && now - ok_since_ >= 60000) jammed_ = false;
+    }
+  }
+
+  // --- Spoofing
+  auto spoof = [&](uint8_t why, uint32_t detail) {
+    last_[why] = now ? now : 1;
+    ++alarms_;
+    ev = Event();
+    ev.type = EV_GPS_SPOOF;
+    ev.channel = why;
+    ev.count = (uint16_t)(detail > 0xFFFF ? 0xFFFF : detail);
+    ev.dst[0] = s.tracked;
+    return true;
+  };
+  bool fire = false;
+  if (s.has_pos) {
+    if (had_pos_ && now - pos_ms_ >= 1000 && now - pos_ms_ <= 10000) {
+      const double m = gpsDistanceM(lat_, lon_, s.lat, s.lon);
+      const double kmh = m / ((now - pos_ms_) / 1000.0) * 3.6;
+      if (kmh > 1200 && m > 500 && rearmed(SPOOF_JUMP, now)) fire = spoof(SPOOF_JUMP, (uint32_t)kmh);
+    }
+    had_pos_ = true;
+    lat_ = s.lat; lon_ = s.lon; pos_ms_ = now;
+  } else if (had_pos_ && now - pos_ms_ > 10000) {
+    had_pos_ = false;   // fix lost for a while: compare afresh when it's back
+  }
+  if (s.has_utc) {
+    const int64_t off = (int64_t)s.utc - (int64_t)(now / 1000);
+    if (had_utc_) {
+      const int64_t d = off - utc_off_;
+      const int64_t ad = d < 0 ? -d : d;
+      if (ad > 5 && !fire && rearmed(SPOOF_CLOCK, now)) fire = spoof(SPOOF_CLOCK, (uint32_t)ad);
+      // Follow it slowly (our millis() drifts a little), but a jump is reported once.
+      utc_off_ = ad > 5 ? off : utc_off_;
+    } else {
+      utc_off_ = off;
+      had_utc_ = true;
+    }
+  }
+  if (!fire && s.tracked >= 6 && s.spread > 0 && s.spread <= 3 && s.top4 >= 40 && rearmed(SPOOF_UNIFORM, now))
+    fire = spoof(SPOOF_UNIFORM, (uint32_t)(s.spread * 10 + 0.5f));
+  if (!fire && s.top4 >= 56 && rearmed(SPOOF_STRONG, now)) fire = spoof(SPOOF_STRONG, (uint32_t)(s.top4 + 0.5f));
+  return fire;
 }
 
 }  // namespace ss

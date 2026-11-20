@@ -13,7 +13,7 @@ namespace ss {
 namespace subghz {
 
 // Category mask: the watch runs while CAT_PENTEST (jammers) or CAT_VEHICLE is on.
-bool begin(volatile uint16_t* category_mask);
+bool begin(volatile CatMask* category_mask);
 bool ready();
 bool running();
 // A jamming alarm for the master (EV_RF_JAM), once.

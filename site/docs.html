@@ -81,6 +81,8 @@
         height, speed and heading, the pilot's position and how far it is from the drone, and the operator's description. Also DJI DroneID,
         DJI / Parrot / Skydio radios and drone Wi-Fi hotspots.</li>
       <li><b>Card skimmers:</b> the serial Bluetooth modules (HC-05, HC-06, JDY and friends) found inside gas pumps and ATMs.</li>
+      <li><b>Cameras:</b> doorbells and home and business cameras by maker (Ring, Hikvision, Verkada, Wyze, Arlo, Axis, Blink, GoPro). Weak matches by
+        design: they're counted in their own category and never alert alone, so a street of doorbells doesn't bury a real plate reader.</li>
     </ul>
     <h3>Attacks and hacker gear</h3>
     <ul>
@@ -90,8 +92,10 @@
         the fakes are kept out of the counts and the list.</li>
       <li><b>Deauth and disassociation floods:</b> someone knocking devices off their Wi-Fi.</li>
       <li><b>Sub-GHz jamming</b> (T-Embed CC1101): a fob or alarm band held loud for seconds, as car-theft jammers do.</li>
+      <li><b>GPS jamming and spoofing</b> (Heltec Wireless Tracker): the satellites drowned out while the receiver keeps running, or a position or clock that
+        jumps impossibly, or every satellite arriving equally (or impossibly) strong. A parked board is the reliable judge: a garage or tunnel also hides the sky.</li>
       <li><b>Bluetooth spam:</b> a burst of fake AirPods / Android / Windows pop-ups from one transmitter.</li>
-      <li><b>Flipper Zero</b> (when its Bluetooth is on, the default), <b>Wi-Fi Pineapple</b> (by Hak5's address), <b>Pwnagotchi</b> (its "hello" beacons).
+      <li><b>Flipper Zero</b> (when its Bluetooth is on, the default; found by what it sends, so a renamed one still shows), <b>Wi-Fi Pineapple</b> (by Hak5's address), <b>Pwnagotchi</b> (its "hello" beacons).
         A device whose radios are silent can't be detected by anything that only listens.</li>
     </ul>
     <h3>Following and lingering</h3>
@@ -103,7 +107,11 @@
     <ul>
       <li><b>Phones and tablets:</b> by Bluetooth, by Wi-Fi probes (addresses that change are stitched back together), by their traffic while
         connected to Wi-Fi (private addresses included), by maker (the IEEE registry), and phone hotspots ("Rob's iPhone", "Galaxy S24").</li>
-      <li><b>Vehicles:</b> Teslas (their phone-key Bluetooth), car makers' Wi-Fi hotspots, car stereos and OBD-II dongles.</li>
+      <li><b>Vehicles:</b> Teslas and 13 other car makers' phone-key and app Bluetooth, car makers' Wi-Fi hotspots, car stereos, OBD-II dongles,
+        and e-bikes and scooters (Segway-Ninebot, VanMoof, Shimano drive units).</li>
+      <li><b>AirDrop and Wi-Fi Direct:</b> iPhones, iPads and Macs using Apple's AWDL (AirDrop, AirPlay), and printers, TVs and phones sharing over Wi-Fi Direct.</li>
+      <li><b>Smart home mesh</b> (C5 nodes, off by default): Zigbee and Thread / Matter devices on the C5's 802.15.4 radio, with the network each is on.
+        Turning it on gives each C5 node's radio to it for 1.5 s of every 15 s.</li>
       <li><b>Routers:</b> security (open, WEP, WPA2, WPA3, Enterprise), Wi-Fi generation and channel width, devices connected and channel load,
         make and model, how long since it restarted, which devices are talking to it, and a channel chart.</li>
       <li><b>Bluetooth details:</b> AirPods and Beats battery levels, Apple activity, iBeacon and Eddystone IDs, Fast Pair, thermometers and BTHome sensors,

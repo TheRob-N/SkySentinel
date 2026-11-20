@@ -142,12 +142,13 @@ bool decodeWelcome(const uint8_t* p, size_t n, Welcome& m) {
 
 size_t encodeConfig(const Config& m, uint8_t* out, size_t cap) {
   Writer w(out, cap);
-  w.u8(m.cfg_version); w.u8(m.role); w.u16(m.category_mask); w.u64(m.channel_mask);
+  w.u8(m.cfg_version); w.u8(m.role); w.u16((uint16_t)m.category_mask); w.u64(m.channel_mask);
   w.u16(m.dwell_ms); w.u16(m.report_ms); w.i8(m.rssi_floor); w.u8(m.ble_duty_pct);
   w.u8(m.node_flags);
   const uint8_t ll = (uint8_t)strnlen(m.label, kMaxLabel);
   w.u8(ll); w.bytes((const uint8_t*)m.label, ll);
   w.u8(m.lora_mode); w.u8(m.lora_slot);
+  w.u16((uint16_t)(m.category_mask >> 16));
   return w.ok() ? w.size() : 0;
 }
 bool decodeConfig(const uint8_t* p, size_t n, Config& m) {
@@ -165,6 +166,9 @@ bool decodeConfig(const uint8_t* p, size_t n, Config& m) {
   }
   m.lora_mode = r.remaining() ? r.u8() : 0;
   m.lora_slot = r.remaining() ? r.u8() : 0;
+  // Categories 16+ (2.1.6). A master from before them can't switch them off: on.
+  const uint32_t hi = r.remaining() >= 2 ? r.u16() : 0xFFFFu;
+  m.category_mask = (m.category_mask & 0xFFFFu) | (hi << 16);
   return r.ok();
 }
 
@@ -295,7 +299,7 @@ bool fileNameOk(const char* name) {
 
 size_t encodeDash(const Dash& m, uint8_t* out, size_t cap) {
   Writer w(out, cap);
-  w.u8(m.deploy); w.u16(m.cats); w.u8(m.nodes_online); w.u8(m.nodes_total); w.u16(m.devices_now);
+  w.u8(m.deploy); w.u16((uint16_t)m.cats); w.u8(m.nodes_online); w.u8(m.nodes_total); w.u16(m.devices_now);
   w.u8(CAT_COUNT - 1);
   for (uint8_t c = 1; c < CAT_COUNT; ++c) w.u8(m.now[c]);
   w.u16(m.alert.seq); w.u8(m.alert.level); w.u8(m.alert.category); w.u16(m.alert.age_s);
@@ -307,6 +311,7 @@ size_t encodeDash(const Dash& m, uint8_t* out, size_t cap) {
     w.u8(t.category); w.i8(t.rssi); w.u8(t.conf); w.u8(t.flags);
     putText(w, t.text, kDashText);
   }
+  w.u16((uint16_t)(m.cats >> 16));   // categories 16+ (2.1.6)
   return w.ok() ? w.size() : 0;
 }
 bool decodeDash(const uint8_t* p, size_t n, Dash& m) {
@@ -327,6 +332,8 @@ bool decodeDash(const uint8_t* p, size_t n, Dash& m) {
     t.category = r.u8(); t.rssi = r.i8(); t.conf = r.u8(); t.flags = r.u8();
     if (!r.ok() || !getText(r, t.text, kDashText)) return false;
   }
+  const uint32_t hi = r.remaining() >= 2 ? r.u16() : 0xFFFFu;   // older masters: on
+  m.cats = (m.cats & 0xFFFFu) | (hi << 16);
   return r.ok();
 }
 
@@ -649,11 +656,13 @@ bool CobsDeframer::feed(uint8_t byte) {
 
 static const char* const kCatNames[CAT_COUNT] = {
   "none", "flock", "bodycam", "tracker", "glasses", "drone", "skimmer", "pentest",
-  "phone", "audio", "wearable", "other_ble", "other_wifi", "lora", "vehicle", "subghz",
+  "phone", "audio", "wearable", "other_ble", "other_wifi", "lora", "vehicle", "subghz", "camera",
+  "smarthome",
 };
 static const char* const kCatLabels[CAT_COUNT] = {
   "None", "ALPR", "Body cams", "Trackers", "Rec. glasses", "Drones", "Skimmers", "Pentest gear",
   "Phones", "Audio", "Wearables", "Other BLE", "Other Wi-Fi", "LoRa / Meshtastic", "Vehicles", "Sub-GHz",
+  "Cameras", "Smart home mesh",
 };
 const char* categoryName(uint8_t cat) { return cat < CAT_COUNT ? kCatNames[cat] : "unknown"; }
 const char* categoryLabel(uint8_t cat) { return cat < CAT_COUNT ? kCatLabels[cat] : "Unknown"; }

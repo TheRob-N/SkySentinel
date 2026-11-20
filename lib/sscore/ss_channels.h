@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 
+#include "ss_proto.h"   // CatMask
+
 namespace ss {
 
 // Index i in a channel mask = kChannels[i].
@@ -28,7 +30,7 @@ struct ScanPlan {
 
 // Mirrors the Categories screen: BLE-only categories give BLE 100%, Wi-Fi
 // categories add only the channels they need.
-ScanPlan planForCategories(uint16_t category_mask);
+ScanPlan planForCategories(CatMask category_mask);
 
 // Splits a channel mask across `node_count` Wi-Fi nodes by interleaving, so
 // every node gets a mix of 2.4 and 5 GHz. Returns node `index`'s share.

@@ -23,10 +23,11 @@ SIGHTING_SIZE = 24
 
 MSG = {1: "hello", 2: "welcome", 3: "config", 4: "heartbeat", 5: "sightings", 6: "name", 7: "event", 8: "command"}
 CATEGORIES = ["none", "flock", "bodycam", "tracker", "glasses", "drone", "skimmer", "pentest",
-              "phone", "audio", "wearable", "other_ble", "other_wifi", "lora", "vehicle", "subghz"]
+              "phone", "audio", "wearable", "other_ble", "other_wifi", "lora", "vehicle", "subghz",
+              "camera", "smarthome"]
 KINDS = {0x01: "wifi_beacon", 0x02: "wifi_probe_req", 0x03: "wifi_probe_resp", 0x04: "wifi_data",
          0x05: "wifi_other", 0x10: "ble_adv", 0x20: "bt_classic", 0x30: "lora_meshtastic", 0x31: "lorawan", 0x32: "lora_meshcore",
-         0x40: "subghz"}
+         0x40: "subghz", 0x50: "zigbee", 0x51: "thread", 0x52: "ieee802154"}
 CHANNELS = list(range(1, 14)) + [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124,
                                  128, 132, 136, 140, 144, 149, 153, 157, 161, 165]
 
@@ -142,6 +143,12 @@ def decode_payload(f: Frame) -> dict:
             return {"core_mac": fmt_mac(mac), "node_index": idx, "core_ms": core_ms, "auth": auth}
         if f.type == 3:
             ver, role, cats, chmask, dwell, report, floor, duty = struct.unpack("<BBHQHHbB", p[:18])
+            # Trailing (optional): node_flags, label, lora_mode, lora_slot, categories 16+ (2.1.6)
+            i = 18 + 1
+            if len(p) > i:
+                i += 1 + p[i]
+            i += 2
+            cats |= (struct.unpack_from("<H", p, i)[0] if len(p) >= i + 2 else 0xFFFF) << 16
             node_flags = p[18] if len(p) > 18 else 0  # optional trailing fields
             label = p[20:20 + p[19]].decode("utf-8", "replace") if len(p) > 19 else ""
             chans = [c for i, c in enumerate(CHANNELS) if chmask >> i & 1]

@@ -140,7 +140,7 @@ static uint32_t lastCoreContact = 0;
 static uint8_t nodeSlot = 0xFF;
 
 static Config cfg;
-static volatile uint16_t catMask = 0;
+static volatile CatMask catMask = 0;
 static volatile int8_t rssiFloor = -95;
 // The cluster's link channel (1, 6 or 11, saved as "lch"): the master may move it, and
 // we follow; a node that lost the master looks for it on each in turn (ss_linkchan.h).
@@ -220,6 +220,11 @@ static void onPromisc(void* buf, wifi_promiscuous_pkt_type_t type) {
       portENTER_CRITICAL(&floodMux);
       flood.onFrame(f, ch, millis());
       portEXIT_CRITICAL(&floodMux);
+    }
+    // Action frames that say who sent them: AWDL (Apple) and Wi-Fi Direct
+    if ((f.awdl || f.p2p) && wantsWifi() && rssi >= rssiFloor && !macIsMulticast(f.addr2)) {
+      const Match m = classifyWifi(f);
+      if (catMask & catBit(m.category)) enqueue(makeWifiSighting(f, m, ch, rssi), nullptr, 0);
     }
     return;
   }
@@ -317,8 +322,8 @@ static void applyConfig(const Config& c) {
   cfg = c;
   catMask = c.category_mask;
   rssiFloor = c.rssi_floor;
-  Out.printf("[classic] config v%u wifi=%s channels=%u cats=0x%04X classic=%s\n", c.cfg_version,
-             wantsWifi() ? "yes" : "no", channelCount(c.channel_mask), c.category_mask,
+  Out.printf("[classic] config v%u wifi=%s channels=%u cats=0x%05lX classic=%s\n", c.cfg_version,
+             wantsWifi() ? "yes" : "no", channelCount(c.channel_mask), (unsigned long)c.category_mask,
              (c.category_mask & kClassicCats) ? "on" : "off");
 }
 
@@ -326,7 +331,7 @@ static void defaultConfig() {
   Config c;
   c.cfg_version = 0;
   c.role = ROLE_WIFI;
-  c.category_mask = kAllCategoriesMask;
+  c.category_mask = kDefaultCategoriesMask;
   c.channel_mask = 0;
   c.ble_duty_pct = 0;
   c.report_ms = 1000;
@@ -604,9 +609,9 @@ static void emitStatus(uint32_t now) {
   jsonMac(myMac);
   Out.printf(",\"rel\":\"%s\",\"bld\":%lu", SS_RELEASE, (unsigned long)ssBuildStamp);   // which build this is
   Out.printf(",\"lch\":%u", homeChannel);
-  Out.printf(",\"id\":\"%04X\",\"key\":%s,\"ms\":%lu,\"cats\":%u,\"ch\":%u,\"channels\":%u,\"ble_duty\":0,"
+  Out.printf(",\"id\":\"%04X\",\"key\":%s,\"ms\":%lu,\"cats\":%lu,\"ch\":%u,\"channels\":%u,\"ble_duty\":0,"
              "\"wifi_frames\":%lu,\"ble_adv\":%lu,\"classic\":%lu,\"inquiries\":%lu,\"bt\":%s,\"drops\":%lu",
-             myId, clusterKey.length() ? "true" : "false", (unsigned long)now, catMask, curChannel,
+             myId, clusterKey.length() ? "true" : "false", (unsigned long)now, (unsigned long)catMask, curChannel,
              channelCount(cfg.channel_mask), (unsigned long)wifiFrames, (unsigned long)classicFound,
              (unsigned long)classicFound, (unsigned long)inquiries, btReady ? "true" : "false",
              (unsigned long)queueDrops);

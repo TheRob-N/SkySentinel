@@ -60,6 +60,8 @@ void onSighting(const Sighting& s, const char* name);
 bool huntBle();
 // Turns the picture around (wheel on the left or the right); saved on the board.
 void flip();
+// Boot screen (shown by begin()): one line per thing that started. ok: 1 green, 0 amber, 2 plain.
+void bootStep(const char* what, const char* result, uint8_t ok);
 #endif
 
 }  // namespace display

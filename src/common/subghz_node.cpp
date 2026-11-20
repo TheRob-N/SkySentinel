@@ -10,7 +10,7 @@ namespace ss {
 namespace subghz {
 
 static CC1101* radio = nullptr;
-static volatile uint16_t* cats_ = nullptr;
+static volatile CatMask* cats_ = nullptr;
 static bool ready_ = false;
 static volatile bool running_ = false;
 static SubGhzWatch watch_;
@@ -131,7 +131,7 @@ static void task(void*) {
   }
 }
 
-bool begin(volatile uint16_t* category_mask) {
+bool begin(volatile CatMask* category_mask) {
   cats_ = category_mask;
   tembed::begin();
   static Module mod(tembed::CC_CS, tembed::CC_GDO0, RADIOLIB_NC, tembed::CC_GDO2, SPI);

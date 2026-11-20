@@ -6,6 +6,7 @@
 
 #include "logger.h"
 #include "ss_classify.h"
+#include "ss_gps.h"
 
 namespace ss {
 
@@ -139,10 +140,22 @@ void emitEvent(const Event& ev, int slot) {
     else if (ev.type == EV_WIFI_SPAM) snprintf(text, sizeof(text), "Wi-Fi spam: %u fake networks", ev.count);
     else if (ev.type == EV_EVIL_TWIN) snprintf(text, sizeof(text), "EVIL TWIN: 1 radio, %u networks", ev.count);
     else if (ev.type == EV_RF_JAM) snprintf(text, sizeof(text), "JAMMING on %u.%02u MHz", ev.count / 100, ev.count % 100);
+    else if (ev.type == EV_GPS_JAM) snprintf(text, sizeof(text), "GPS JAMMING: -%u dB", ev.count);
+    else if (ev.type == EV_GPS_SPOOF) snprintf(text, sizeof(text), "GPS SPOOFING? %s", gpsSpoofWhyName(ev.channel));
     else snprintf(text, sizeof(text), "%s flood on ch %u", ev.type == EV_DEAUTH_FLOOD ? "Deauth" : "Disassoc", ev.channel);
     g_dashAlerts->raise(2, CAT_PENTEST, text, millis());
   }
   if (!g_jsonOn) return;
+  if (ev.type == EV_GPS_JAM) {
+    Out.printf("{\"t\":\"event\",\"event\":\"gps_jam\",\"slot\":%d,\"db\":%u,\"before\":%u,\"now\":%u}\n", slot, ev.count,
+               ev.channel, ev.dst[0]);
+    return;
+  }
+  if (ev.type == EV_GPS_SPOOF) {
+    Out.printf("{\"t\":\"event\",\"event\":\"gps_spoof\",\"slot\":%d,\"why\":\"%s\",\"value\":%u,\"sats\":%u}\n", slot,
+               gpsSpoofWhyName(ev.channel), ev.count, ev.dst[0]);
+    return;
+  }
   if (ev.type == EV_RF_JAM) {
     Out.printf("{\"t\":\"event\",\"event\":\"rf_jam\",\"slot\":%d,\"mhz\":\"%u.%02u\",\"db\":%u}\n", slot, ev.count / 100,
                ev.count % 100, ev.dst[0]);
@@ -301,6 +314,7 @@ static const char* radioLetter(uint8_t radio) {
     case 3: return "c";
     case 4: return "l";
     case 5: return "s";
+    case 6: return "z";
     default: return "o";
   }
 }

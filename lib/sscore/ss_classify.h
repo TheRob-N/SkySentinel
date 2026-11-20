@@ -84,6 +84,8 @@ struct WifiFrame {
   uint16_t sta = 0xFFFF;   // devices connected (BSS Load element), 0xFFFF = not said
   uint8_t util = 255;      // channel busy, 0..255 (BSS Load), 255 = not said
   char wps[33] = {0};      // WPS manufacturer / model, "" = none
+  bool awdl = false;       // Apple Wireless Direct Link action frame (AirDrop / AirPlay / Sidecar)
+  bool p2p = false;        // Wi-Fi Direct: a P2P element, or a P2P public action frame
 };
 enum ApSec : uint8_t { SEC_UNKNOWN = 0, SEC_OPEN, SEC_WEP, SEC_WPA, SEC_WPA2, SEC_WPA3, SEC_WPA2_3, SEC_ENTERPRISE, SEC_OWE };
 const char* apSecName(uint8_t s);   // "open", "WPA2", ...
@@ -136,6 +138,8 @@ enum SigId : uint16_t {
   SIG_FLOCK_OWN_OUI, SIG_RING_OUI, SIG_FLOCK_BLE_UUID,
   // Camera makers by address block, in CamMaker order (ss_sigdata.h)
   SIG_HIKVISION_OUI, SIG_VERKADA_OUI, SIG_WYZE_OUI, SIG_ARLO_OUI, SIG_AXIS_OUI, SIG_BLINK_OUI, SIG_GENETEC_OUI,
+  // Cameras by Bluetooth (2.1.6)
+  SIG_GOPRO = 250, SIG_CAMERA_MAKER_BLE,
   // Body cams
   SIG_AXON_OUI = 20, SIG_AXON_NAME, SIG_AXON_UUID, SIG_TASER_MFGR, SIG_MOTO_SOLUTIONS, SIG_MOTO_SOLUTIONS_OUI,
   SIG_DIGITAL_ALLY_OUI, SIG_WATCHGUARD_OUI, SIG_UTILITY_OUI, SIG_ZEPCAM_OUI,
@@ -154,7 +158,7 @@ enum SigId : uint16_t {
   SIG_FLIPPER = 80, SIG_PINEAPPLE, SIG_PWNAGOTCHI,
   // Phones
   SIG_APPLE_DEVICE = 100, SIG_SAMSUNG_DEVICE, SIG_GOOGLE_DEVICE, SIG_PROBE_RANDOM, SIG_PROBE_GLOBAL,
-  SIG_SAYS_PHONE,
+  SIG_SAYS_PHONE, SIG_APPLE_AWDL,
   // Audio (SAYS_* = the device announces its own type in its advert)
   SIG_APPLE_AUDIO = 120, SIG_FAST_PAIR, SIG_BOSE, SIG_SONY, SIG_HARMAN,
   SIG_SAYS_EARBUDS, SIG_SAYS_HEADSET, SIG_SAYS_HEADPHONES, SIG_SAYS_SPEAKER, SIG_SAYS_HEARING_AID,
@@ -163,6 +167,7 @@ enum SigId : uint16_t {
   SIG_GARMIN = 140, SIG_POLAR, SIG_HEART_RATE, SIG_SAYS_WATCH, SIG_SAYS_FITNESS, SIG_WEARABLE_MAKER,
   // Other
   SIG_MICROSOFT = 160, SIG_GENERIC_BLE, SIG_ACCESS_POINT, SIG_SAYS_COMPUTER, SIG_SAYS_INPUT, SIG_SWIFT_PAIR,
+  SIG_WIFI_DIRECT, SIG_AMAZON_BLE,
   // Classic Bluetooth (from the Class of Device a discoverable device answers with)
   SIG_CLASSIC_HEADSET = 180, SIG_CLASSIC_HEADPHONES, SIG_CLASSIC_SPEAKER, SIG_CLASSIC_CAR_AUDIO,
   SIG_CLASSIC_AUDIO, SIG_CLASSIC_PHONE, SIG_CLASSIC_COMPUTER, SIG_CLASSIC_INPUT, SIG_CLASSIC_WEARABLE,
@@ -174,8 +179,11 @@ enum SigId : uint16_t {
   SIG_SUBGHZ_BAND = 210, SIG_SUBGHZ_BAND_LAST = 215,
   // Vehicles
   SIG_TESLA_BLE = 220, SIG_CAR_WIFI, SIG_CAR_BT_NAME, SIG_OBD_DONGLE, SIG_CAR_STEREO,
+  SIG_CAR_MAKER_BLE, SIG_EBIKE_SCOOTER,
   // Wi-Fi clients seen in their traffic, and makers known by their address block
   SIG_WIFI_CLIENT_PRIVATE = 240, SIG_WIFI_CLIENT, SIG_PHONE_MAKER_WIFI, SIG_AMAZON_WIFI, SIG_PHONE_HOTSPOT,
+  // 802.15.4 (C5 nodes, 2.1.6)
+  SIG_ZIGBEE = 260, SIG_ZIGBEE_COORD, SIG_THREAD, SIG_154_OTHER,
 };
 
 struct Match {

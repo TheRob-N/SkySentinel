@@ -26,6 +26,7 @@
 #include "ss_version.h"
 #include "ss_fileserve.h"
 #include "ss_linkchan.h"
+#include "ss_154.h"
 
 using namespace ss;
 
@@ -146,7 +147,7 @@ static void testCrcAndFrames() {
   c.channel_mask = kMaskAll; c.dwell_ms = 150; c.report_ms = 800; c.rssi_floor = -88; c.ble_duty_pct = 35;
   c.node_flags = NF_DISPLAY_OFF;
   pl = encodeConfig(c, payload, sizeof(payload));
-  CHECK_EQ(pl, 22u);  // 18 + node_flags + empty name + LoRa mode/slot
+  CHECK_EQ(pl, 24u);  // 18 + node_flags + empty name + LoRa mode/slot + categories 16+
   Config c2;
   CHECK(decodeConfig(payload, pl, c2));
   CHECK_EQ(c2.node_flags, NF_DISPLAY_OFF);
@@ -155,11 +156,11 @@ static void testCrcAndFrames() {
     strcpy(named.label, "Truck rear");
     uint8_t nb[kMaxConfigSize];
     const size_t nl = encodeConfig(named, nb, sizeof(nb));
-    CHECK_EQ(nl, 32u);                                       // 18 + flags + len + 10 + LoRa 2
+    CHECK_EQ(nl, 34u);                                       // 18 + flags + len + 10 + LoRa 2 + cats 2
     Config back;
     CHECK(decodeConfig(nb, nl, back));
     CHECK(strcmp(back.label, "Truck rear") == 0 && back.node_flags == NF_DISPLAY_OFF);
-    CHECK(!decodeConfig(nb, nl - 3, back));                  // name cut short
+    CHECK(!decodeConfig(nb, nl - 5, back));                  // name cut short
     Config longest = c;
     memset(longest.label, 'x', kMaxLabel);
     CHECK_EQ(encodeConfig(longest, nb, sizeof(nb)), kMaxConfigSize);
@@ -570,7 +571,7 @@ static void testBle() {
   CHECK_EQ(classifyBle(parseAdv(axon, {0x7A, 1, 2, 3, 4, 5}, SS_ADDR_RANDOM)).sig_id, SIG_AXON_NAME);
 
   // Flock BLE OUI on a random address is not Flock
-  CHECK_EQ(classifyBle(parseAdv(empty, {0x18, 0x7F, 0x88, 1, 2, 3}, SS_ADDR_PUBLIC)).category, CAT_FLOCK);
+  CHECK_EQ(classifyBle(parseAdv(empty, {0x18, 0x7F, 0x88, 1, 2, 3}, SS_ADDR_PUBLIC)).category, CAT_CAMERA);   // Ring
   CHECK(classifyBle(parseAdv(empty, {0x18, 0x7F, 0x88, 1, 2, 3}, SS_ADDR_RANDOM)).category != CAT_FLOCK);
 
   // Ring OUIs were in the "Flock BLE" list: still ALPR-category, but weak and labeled Ring
@@ -661,9 +662,9 @@ static void testBle() {
     CHECK(m.category == CAT_TRACKER && m.sig_id == SIG_FINDMY_ACCESSORY && !m.strong);
   }
   {
-    // Camera makers by block: weak, named; home and business cameras stay out of ALPR
+    // Camera makers by block: weak, named, Cameras; only Genetec counts as ALPR
     m = classifyBle(parseAdv(empty, {0xE0, 0xA7, 0x00, 1, 2, 3}, SS_ADDR_PUBLIC));
-    CHECK(m.sig_id == SIG_VERKADA_OUI && m.category == CAT_OTHER_BLE && !m.strong);
+    CHECK(m.sig_id == SIG_VERKADA_OUI && m.category == CAT_CAMERA && !m.strong);
     m = classifyBle(parseAdv(empty, {0x00, 0xBF, 0x15, 1, 2, 3}, SS_ADDR_PUBLIC));
     CHECK(m.sig_id == SIG_GENETEC_OUI && m.category == CAT_FLOCK && !m.strong && m.conf < 50);
     CHECK(classifyBle(parseAdv(empty, {0x00, 0x0A, 0xB1, 1, 2, 3}, SS_ADDR_PUBLIC)).sig_id != SIG_GENETEC_OUI);
@@ -990,13 +991,13 @@ static void testWifi() {
   m = classifyWifi(fe);
   CHECK(m.sig_id == SIG_FLOCK_WIFI_OUI_GENERIC && m.conf <= 20 && m.category == CAT_OTHER_WIFI);
   {
-    // A Hikvision NVR's access point: named, filed as ordinary Wi-Fi, weak
+    // A Hikvision NVR's access point: named, a camera, weak
     Frame hik(8, kBcast, {0xBC, 0xAD, 0x28, 0x01, 0x02, 0x03});
     hik.ssid("HIK-NVR");
     WifiFrame fh;
     parseWifiFrame(hik.b.data(), hik.b.size(), fh);
     m = classifyWifi(fh);
-    CHECK(m.sig_id == SIG_HIKVISION_OUI && m.category == CAT_OTHER_WIFI && !m.strong);
+    CHECK(m.sig_id == SIG_HIKVISION_OUI && m.category == CAT_CAMERA && !m.strong);
   }
 
   {
@@ -1997,7 +1998,25 @@ static void testLora() {
   lc.lora_slot = 33;
   ln = encodeConfig(lc, lb, sizeof(lb));
   CHECK(decodeConfig(lb, ln, ld) && ld.lora_mode == LM_LONGFAST && ld.lora_slot == 33);
-  CHECK(decodeConfig(lb, ln - 2, ld) && ld.lora_mode == LM_AUTO && ld.lora_slot == 0);
+  CHECK(decodeConfig(lb, ln - 4, ld) && ld.lora_mode == LM_AUTO && ld.lora_slot == 0);
+  {
+    // Categories past 16 (2.1.6): the high half rides last; a master from before it means "on"
+    Config cc;
+    cc.category_mask = catBit(CAT_FLOCK) | catBit(CAT_SUBGHZ);   // Cameras off
+    uint8_t cb[kMaxConfigSize];
+    const size_t cn = encodeConfig(cc, cb, sizeof(cb));
+    Config cd;
+    CHECK(decodeConfig(cb, cn, cd) && cd.category_mask == cc.category_mask);
+    CHECK(decodeConfig(cb, cn - 2, cd) && (cd.category_mask & catBit(CAT_CAMERA)) &&
+          (cd.category_mask & 0xFFFFu) == (cc.category_mask & 0xFFFFu));
+    cc.category_mask = kAllCategoriesMask;
+    CHECK(decodeConfig(cb, encodeConfig(cc, cb, sizeof(cb)), cd) && cd.category_mask == kAllCategoriesMask);
+    CHECK(CAT_CAMERA == 16 && (kAllCategoriesMask & catBit(CAT_CAMERA)) && !(kSurveillanceMask & catBit(CAT_CAMERA)));
+    CHECK(strcmp(categoryName(CAT_CAMERA), "camera") == 0 && strcmp(categoryLabel(CAT_CAMERA), "Cameras") == 0);
+    // Cameras need 2.4 GHz Wi-Fi and Bluetooth
+    const ScanPlan sp = planForCategories(catBit(CAT_CAMERA));
+    CHECK(sp.channel_mask == kMask24 && sp.ble_duty_pct > 0);
+  }
 }
 
 // A drive: every minute the access points around us are new ones; a tracker rides
@@ -2349,7 +2368,9 @@ static void testDash() {
   CHECK(back.deploy == 1 && back.nodes_online == 2 && back.cats == cats && back.n_threats == d.n_threats);
   CHECK(back.now[CAT_TRACKER] == d.now[CAT_TRACKER] && back.alert.seq == 2);
   CHECK(strcmp(back.threats[0].text, d.threats[0].text) == 0 && back.threats[0].flags == d.threats[0].flags);
-  CHECK(!decodeDash(buf, len - 1, back));
+  CHECK(!decodeDash(buf, len - 3, back));   // cut into the last threat
+  CHECK(decodeDash(buf, len - 2, back) && (back.cats & 0xFFFFu) == (cats & 0xFFFFu) &&
+        (back.cats & catBit(CAT_CAMERA)));     // from a master before 2.1.6: Cameras count as on
   // Biggest possible dash still fits
   Dash big;
   big.n_threats = kDashThreats;
@@ -2927,6 +2948,188 @@ static void testLinkChannel() {
 
 extern const uint32_t ssBuildStamp = 0;
 
+// 2.1.6: Wi-Fi Direct and AWDL, more Bluetooth makers, Zigbee / Thread, GPS jamming / spoofing
+static void testDetectionSources() {
+  puts("detection sources (2.1.6)");
+  Match m;
+  {
+    // AWDL: vendor-specific action frame, Apple 00:17:F2 type 8
+    Frame aw(13, kBcast, {0x5E, 0x11, 0x22, 0x33, 0x44, 0x55});
+    for (uint8_t v : {127, 0x00, 0x17, 0xF2, 0x08, 0x00, 0x01}) aw.b.push_back(v);
+    WifiFrame f;
+    CHECK(parseWifiFrame(aw.b.data(), aw.b.size(), f) && f.kind == KIND_WIFI_OTHER && f.awdl && !f.p2p);
+    m = classifyWifi(f);
+    CHECK(m.category == CAT_PHONE && m.sig_id == SIG_APPLE_AWDL && !m.strong);
+    CHECK(radioClass(f.kind) == 1);
+    // Wi-Fi Direct public action frame (category 4, action 9, WFA 50:6F:9A type 9)
+    Frame pa(13, kBcast, {0x7A, 0x11, 0x22, 0x33, 0x44, 0x55});
+    for (uint8_t v : {4, 9, 0x50, 0x6F, 0x9A, 0x09, 0x00}) pa.b.push_back(v);
+    CHECK(parseWifiFrame(pa.b.data(), pa.b.size(), f) && f.p2p && !f.awdl);
+    CHECK_EQ(classifyWifi(f).sig_id, SIG_WIFI_DIRECT);
+    // A "DIRECT-" printer's beacon carries the P2P element
+    Frame pb(8, kBcast, {0xDE, 0x11, 0x22, 0x33, 0x44, 0x55});
+    pb.ssid("DIRECT-4F-HP OfficeJet").ie(221, {0x50, 0x6F, 0x9A, 0x09, 0x02, 0x02});
+    CHECK(parseWifiFrame(pb.b.data(), pb.b.size(), f) && f.p2p);
+    m = classifyWifi(f);
+    CHECK(m.category == CAT_OTHER_WIFI && m.sig_id == SIG_WIFI_DIRECT);
+    // Other action frames and a short one: nothing
+    Frame other(13, kBcast, {0x7A, 0x11, 0x22, 0x33, 0x44, 0x55});
+    for (uint8_t v : {127, 0x00, 0x17, 0xF2}) other.b.push_back(v);
+    CHECK(parseWifiFrame(other.b.data(), other.b.size(), f) && !f.awdl && !f.p2p);
+  }
+  {
+    // Bluetooth makers
+    Adv gp; gp.ad(0x03, {0xA6, 0xFE});
+    m = classifyBle(parseAdv(gp, {0xD1, 1, 2, 3, 4, 5}, SS_ADDR_RANDOM));
+    CHECK(m.category == CAT_CAMERA && m.sig_id == SIG_GOPRO);
+    Adv gpc; gpc.mfg(0x02F2, {1});
+    CHECK_EQ(classifyBle(parseAdv(gpc, {0xD1, 1, 2, 3, 4, 5}, SS_ADDR_RANDOM)).sig_id, SIG_GOPRO);
+    Adv wy; wy.mfg(0x0870, {1});
+    m = classifyBle(parseAdv(wy, {0xD1, 1, 2, 3, 4, 5}, SS_ADDR_RANDOM));
+    CHECK(m.category == CAT_CAMERA && m.sig_id == SIG_CAMERA_MAKER_BLE && m.conf < 50);
+    Adv car; car.mfg(0x0723, {1});   // Ford
+    m = classifyBle(parseAdv(car, {0xD1, 1, 2, 3, 4, 5}, SS_ADDR_RANDOM));
+    CHECK(m.category == CAT_VEHICLE && m.sig_id == SIG_CAR_MAKER_BLE);
+    Adv sc; sc.mfg(0x0F1F, {1});     // Segway-Ninebot
+    m = classifyBle(parseAdv(sc, {0xD1, 1, 2, 3, 4, 5}, SS_ADDR_RANDOM));
+    CHECK(m.category == CAT_VEHICLE && m.sig_id == SIG_EBIKE_SCOOTER);
+    Adv poly; poly.mfg(0x0055, {1});  // Plantronics
+    CHECK_EQ(classifyBle(parseAdv(poly, {0xD1, 1, 2, 3, 4, 5}, SS_ADDR_RANDOM)).category, CAT_AUDIO);
+    Adv amz; amz.mfg(0x0171, {1});
+    CHECK_EQ(classifyBle(parseAdv(amz, {0xD1, 1, 2, 3, 4, 5}, SS_ADDR_RANDOM)).sig_id, SIG_AMAZON_BLE);
+    for (uint16_t id : {SIG_APPLE_AWDL, SIG_WIFI_DIRECT, SIG_AMAZON_BLE, SIG_GOPRO, SIG_CAMERA_MAKER_BLE, SIG_CAR_MAKER_BLE,
+                        SIG_EBIKE_SCOOTER, SIG_ZIGBEE, SIG_ZIGBEE_COORD, SIG_THREAD, SIG_154_OTHER})
+      CHECK(strcmp(sigName(id), "Unknown") != 0 && sigName(id)[0]);
+  }
+  {
+    // 802.15.4
+    CHECK(CAT_SMARTHOME == 17 && radioClass(KIND_ZIGBEE) == 6 && radioClass(KIND_THREAD) == 6);
+    CHECK(!(kDefaultCategoriesMask & catBit(CAT_SMARTHOME)) && (kAllCategoriesMask & catBit(CAT_SMARTHOME)) &&
+          (kDefaultCategoriesMask & catBit(CAT_CAMERA)));
+    Frame154 f;
+    // Zigbee data frame: FCF 0x8861 (data, PAN compressed, short dst / short src, 2006),
+    // seq, PAN 0x1A2B, dst 0x0000, src 0x4F21, then NWK: FC 0x1048 (data, version 2,
+    // source IEEE present), dst, src, radius, seq, source IEEE (LSB first)
+    const uint8_t zb[] = {0x61, 0x88, 0x07, 0x2B, 0x1A, 0x00, 0x00, 0x21, 0x4F,
+                          0x08, 0x10, 0x00, 0x00, 0x21, 0x4F, 0x1E, 0x05,
+                          0x88, 0x77, 0x66, 0x55, 0x44, 0x88, 0x17, 0x00, 0xAA, 0xBB};
+    CHECK(parse154(zb, sizeof(zb), f) && f.kind == KIND_ZIGBEE && f.pan == 0x1A2B && f.has_short && f.src_short == 0x4F21);
+    CHECK(f.has_ext && f.src_ext[0] == 0x00 && f.src_ext[1] == 0x17 && f.src_ext[2] == 0x88 && f.src_ext[7] == 0x88);
+    m = classify154(f);
+    CHECK(m.category == CAT_SMARTHOME && m.sig_id == SIG_ZIGBEE);
+    Sighting s = make154Sighting(f, m, 15, -60);
+    CHECK(s.kind == KIND_ZIGBEE && s.channel == 15 && s.addr[0] == 0x00 && s.addr[1] == 0x17 && s.addr[2] == 0x88 &&
+          s.addr[5] == 0x88 && !(s.flags & SF_RANDOM_ADDR) && s.fp == 0);
+    char nm[kMaxName + 1];
+    CHECK(name154(f, m, nm, sizeof(nm)) > 0 && strcmp(nm, "Zigbee PAN 1A2B") == 0);
+    // Same frame without the source IEEE: keyed by PAN + short address, flagged changeable
+    uint8_t zs[sizeof(zb)];
+    memcpy(zs, zb, sizeof(zb));
+    zs[10] = 0x00;   // NWK FC high byte: no IEEE addresses
+    CHECK(parse154(zs, 17, f) && f.kind == KIND_ZIGBEE && !f.has_ext);
+    s = make154Sighting(f, classify154(f), 15, -60);
+    CHECK(s.addr[0] == 0x02 && s.addr[1] == 0x15 && s.addr[2] == 0x1A && s.addr[3] == 0x2B && s.addr[4] == 0x4F &&
+          s.addr[5] == 0x21 && (s.flags & SF_RANDOM_ADDR));
+    // Zigbee beacon: FCF 0x8000 (beacon, short src), seq, src PAN, src short, superframe,
+    // GTS 0, pending 0, payload: protocol 0, stack profile / version, ...
+    const uint8_t bc[] = {0x00, 0x80, 0x11, 0x2B, 0x1A, 0x00, 0x00, 0xFF, 0xCF, 0x00, 0x00, 0x00, 0x22, 0x84};
+    CHECK(parse154(bc, sizeof(bc), f) && f.zigbee_beacon && f.pan == 0x1A2B);
+    CHECK_EQ(classify154(f).sig_id, SIG_ZIGBEE_COORD);
+    // Thread: secured data frame, 2006, extended source; aux header key id mode 1
+    const uint8_t th[] = {0x69, 0xDC, 0x33, 0xCE, 0xFA, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+                          0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                          0x0D, 0x01, 0x00, 0x00, 0x00, 0x01, 0xAA, 0xBB, 0xCC};
+    CHECK(parse154(th, sizeof(th), f) && f.secured && f.has_ext && f.pan == 0xFACE);
+    m = classify154(f);
+    CHECK(m.sig_id == SIG_THREAD && f.src_ext[0] == 0x08 && f.src_ext[7] == 0x01);
+    // Thread MLE: unsecured data, 6LoWPAN IPHC dispatch
+    const uint8_t mle[] = {0x41, 0xD8, 0x01, 0xCE, 0xFA, 0xFF, 0xFF, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                           0x7F, 0x33, 0xF0};
+    CHECK(parse154(mle, sizeof(mle), f) && f.kind == KIND_THREAD);
+    CHECK_EQ(classify154(f).sig_id, SIG_THREAD);
+    CHECK(name154(f, classify154(f), nm, sizeof(nm)) > 0 && strcmp(nm, "Thread PAN FACE") == 0);
+    // ACK and a beacon request say nothing about a sender
+    const uint8_t ack[] = {0x02, 0x00, 0x07};
+    CHECK(!parse154(ack, sizeof(ack), f));
+    const uint8_t breq[] = {0x03, 0x08, 0x05, 0xFF, 0xFF, 0xFF, 0xFF, 0x07};
+    CHECK(!parse154(breq, sizeof(breq), f));
+    // Truncated frames never over-read
+    for (size_t n = 0; n < sizeof(th); ++n) parse154(th, n, f);
+    for (size_t n = 0; n < sizeof(zb); ++n) parse154(zb, n, f);
+    CHECK(!parse154(nullptr, 10, f));
+    // Unknown upper layer
+    const uint8_t odd[] = {0x41, 0x88, 0x01, 0x34, 0x12, 0xFF, 0xFF, 0x10, 0x00, 0xEE, 0xEE};
+    CHECK(parse154(odd, sizeof(odd), f) && classify154(f).sig_id == SIG_154_OTHER);
+  }
+  {
+    // GPS jamming: a learned sky, then everything drops 18 dB and stays down
+    GpsWatch w;
+    Event ev;
+    GpsSnap s;
+    s.alive = true; s.state = GPS_FIX_3D; s.tracked = 9; s.used = 8; s.top4 = 44; s.spread = 20;
+    s.has_pos = true; s.lat = 41.75; s.lon = -77.30; s.has_utc = true;
+    uint32_t t = 1000;
+    bool any = false;
+    for (int i = 0; i < 120; ++i, t += 1000) { s.utc = 1795000000 + t / 1000; any = w.update(s, t, ev) || any; }
+    CHECK(!any && w.baseline() > 43 && w.baseline() < 45);
+    s.state = GPS_SEARCHING; s.tracked = 3; s.used = 0; s.top4 = 0; s.spread = 0; s.has_pos = false;
+    int fired = 0;
+    for (int i = 0; i < 30; ++i, t += 1000) { s.utc = 1795000000 + t / 1000; if (w.update(s, t, ev)) ++fired; }
+    CHECK(fired == 1 && ev.type == EV_GPS_JAM && ev.channel == 9 && ev.count >= 40 && ev.dst[0] == 3 && w.jammed());
+    // Recovery, then no new alarm within the rearm window
+    s.state = GPS_FIX_3D; s.tracked = 9; s.used = 8; s.top4 = 44; s.spread = 20; s.has_pos = true;
+    for (int i = 0; i < 90; ++i, t += 1000) { s.utc = 1795000000 + t / 1000; w.update(s, t, ev); }
+    CHECK(!w.jammed());
+    // A dim but steady sky (indoors) never alarms once learned that way
+    GpsWatch dim;
+    s.top4 = 32; s.tracked = 6;
+    any = false;
+    for (int i = 0; i < 300; ++i, t += 1000) { s.utc = 1795000000 + t / 1000; any = dim.update(s, t, ev) || any; }
+    CHECK(!any);
+    // Receiver gone quiet: not jamming
+    GpsSnap off;
+    for (int i = 0; i < 60; ++i, t += 1000) CHECK(!dim.update(off, t, ev));
+  }
+  {
+    // Spoofing: a 40 km jump in 2 s; a clock jump; a flat sky; impossibly strong
+    GpsWatch w;
+    Event ev;
+    GpsSnap s;
+    s.alive = true; s.state = GPS_FIX_3D; s.tracked = 9; s.used = 8; s.top4 = 44; s.spread = 20;
+    s.has_pos = true; s.lat = 41.75; s.lon = -77.30; s.has_utc = true;
+    uint32_t t = 1000;
+    for (int i = 0; i < 10; ++i, t += 1000) { s.utc = 1795000000 + t / 1000; CHECK(!w.update(s, t, ev)); }
+    t += 1000; s.lat = 42.11; s.utc = 1795000000 + t / 1000;
+    CHECK(w.update(s, t, ev) && ev.type == EV_GPS_SPOOF && ev.channel == SPOOF_JUMP && ev.count > 1200);
+    t += 1000; s.utc = 1795000000 + t / 1000;
+    CHECK(!w.update(s, t, ev));                    // new place, steady: quiet
+    t += 1000; s.utc = 1795000000 + t / 1000 + 3600;
+    CHECK(w.update(s, t, ev) && ev.channel == SPOOF_CLOCK && ev.count >= 3599);
+    t += 1000; s.utc = 1795000000 + t / 1000 + 3600;
+    CHECK(!w.update(s, t, ev));                    // reported once
+    s.spread = 2; s.top4 = 45;
+    t += 1000; s.utc = 1795000000 + t / 1000 + 3600;
+    CHECK(w.update(s, t, ev) && ev.channel == SPOOF_UNIFORM && ev.count == 20);
+    s.spread = 18; s.top4 = 58;
+    t += 1000; s.utc = 1795000000 + t / 1000 + 3600;
+    CHECK(w.update(s, t, ev) && ev.channel == SPOOF_STRONG && ev.count == 58);
+    CHECK(strcmp(gpsSpoofWhyName(SPOOF_JUMP), "position jump") == 0);
+    // Walking pace never counts as a jump
+    GpsWatch walk;
+    s.spread = 20; s.top4 = 44;
+    bool any = false;
+    for (int i = 0; i < 60; ++i, t += 1000) { s.lat += 0.00001; s.utc = 1795000000 + t / 1000; any = walk.update(s, t, ev) || any; }
+    CHECK(!any);
+    CHECK(gpsDistanceM(41.75, -77.30, 41.76, -77.30) > 1100 && gpsDistanceM(41.75, -77.30, 41.76, -77.30) < 1125);
+    CHECK(strcmp(logKindName(LK_GPS_JAM), "gps_jam") == 0 && strcmp(logKindName(LK_GPS_SPOOF), "gps_spoof") == 0);
+    // The events survive the trip to the master
+    Event e; e.type = EV_GPS_JAM; e.channel = 9; e.count = 18; e.dst[0] = 2;
+    uint8_t b[64];
+    Event back;
+    CHECK(decodeEvent(b, encodeEvent(e, b, sizeof(b)), back) && back.type == EV_GPS_JAM && back.count == 18 && back.dst[0] == 2);
+  }
+}
+
 int main(int argc, char** argv) {
   if (argc > 1 && strcmp(argv[1], "--golden") == 0) { emitGolden(); return 0; }
   testCrcAndFrames();
@@ -2957,6 +3160,7 @@ int main(int argc, char** argv) {
   testPairing();
   testFollow();
   testLog();
+  testDetectionSources();
   printf("\n%d passed, %d failed\n", g_pass, g_fail);
   return g_fail ? 1 : 0;
 }

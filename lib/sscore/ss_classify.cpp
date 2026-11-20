@@ -178,9 +178,9 @@ static bool hasUuid128(const BleAdv& a, const uint8_t u[16]) {
 }
 
 // A camera maker's address block (kCameraOuis is sorted): the match, or none. Only the
-// ALPR maker (Genetec) counts as ALPR; home and business cameras are filed under `other`
-// with their maker named, so the ALPR count isn't filled with neighbors' doorbells.
-static bool matchCameraOui(const uint8_t mac[6], uint8_t other, Match& out) {
+// ALPR maker (Genetec) counts as ALPR; home and business cameras are Cameras (2.1.6), so
+// the ALPR count isn't filled with neighbors' doorbells.
+static bool matchCameraOui(const uint8_t mac[6], Match& out) {
   const uint32_t o = ((uint32_t)mac[0] << 16) | ((uint32_t)mac[1] << 8) | mac[2];
   size_t lo = 0, hi = countof(kCameraOuis);
   while (lo < hi) {
@@ -191,7 +191,7 @@ static bool matchCameraOui(const uint8_t mac[6], uint8_t other, Match& out) {
   // Business / city gear a little above home cameras; none of it strong.
   static const uint8_t kConf[] = {35, 40, 30, 30, 40, 30, 45};   // CamMaker order
   const uint8_t m = kCameraOuis[lo].maker;
-  out.category = m == CAM_GENETEC ? (uint8_t)CAT_FLOCK : other;
+  out.category = m == CAM_GENETEC ? (uint8_t)CAT_FLOCK : (uint8_t)CAT_CAMERA;
   out.sig_id = (uint16_t)(SIG_HIKVISION_OUI + m);
   out.conf = kConf[m];
   out.strong = false;
@@ -234,13 +234,13 @@ static Match mk(uint8_t cat, uint16_t sig, uint8_t conf, bool strong) {
 
 #define OS(a, b, c, cat, sig, conf, strong) {{a, b, c}, cat, sig, conf, strong}
 static const OuiSig kOuiSigs[] = {
-  // ALPR: Flock Safety's own registered block, and Ring (Amazon), whose cameras feed
-  // police requests (ouispy-detector listed them; low weight, never an alert alone).
+  // ALPR: Flock Safety's own registered block. Ring (Amazon) cameras feed police requests
+  // (ouispy-detector listed them); low weight, filed as Cameras since 2.1.6.
   OS(0xB4, 0x1E, 0x52, CAT_FLOCK, SIG_FLOCK_OWN_OUI, 80, true),
-  OS(0x18, 0x7F, 0x88, CAT_FLOCK, SIG_RING_OUI, 35, false), OS(0x34, 0x3E, 0xA4, CAT_FLOCK, SIG_RING_OUI, 35, false),
-  OS(0x54, 0xE0, 0x19, CAT_FLOCK, SIG_RING_OUI, 35, false), OS(0x5C, 0x47, 0x5E, CAT_FLOCK, SIG_RING_OUI, 35, false),
-  OS(0x64, 0x9A, 0x63, CAT_FLOCK, SIG_RING_OUI, 35, false), OS(0x90, 0x48, 0x6C, CAT_FLOCK, SIG_RING_OUI, 35, false),
-  OS(0x9C, 0x76, 0x13, CAT_FLOCK, SIG_RING_OUI, 35, false),
+  OS(0x18, 0x7F, 0x88, CAT_CAMERA, SIG_RING_OUI, 35, false), OS(0x34, 0x3E, 0xA4, CAT_CAMERA, SIG_RING_OUI, 35, false),
+  OS(0x54, 0xE0, 0x19, CAT_CAMERA, SIG_RING_OUI, 35, false), OS(0x5C, 0x47, 0x5E, CAT_CAMERA, SIG_RING_OUI, 35, false),
+  OS(0x64, 0x9A, 0x63, CAT_CAMERA, SIG_RING_OUI, 35, false), OS(0x90, 0x48, 0x6C, CAT_CAMERA, SIG_RING_OUI, 35, false),
+  OS(0x9C, 0x76, 0x13, CAT_CAMERA, SIG_RING_OUI, 35, false),
   // Body cams
   OS(0x00, 0x25, 0xDF, CAT_BODYCAM, SIG_AXON_OUI, 75, false),          // Taser International (Axon)
   OS(0x00, 0x23, 0xBD, CAT_BODYCAM, SIG_DIGITAL_ALLY_OUI, 75, false),  // Digital Ally
@@ -358,7 +358,7 @@ Match classifyBle(const BleAdv& a) {
 
   if (pub) {
     if (const OuiSig* o = matchOuiSig(kOuiSigs, a.addr)) return mk(o->cat, o->sig, o->conf, o->strong);
-    { Match m; if (matchCameraOui(a.addr, CAT_OTHER_BLE, m)) return m; }
+    { Match m; if (matchCameraOui(a.addr, m)) return m; }
     if (const Oui* o = matchOui(kFlockBleOuis, a.addr))
       return mk(CAT_FLOCK, SIG_FLOCK_BLE_OUI, o->generic ? 20 : 50, false);
   }
@@ -414,6 +414,14 @@ Match classifyBle(const BleAdv& a) {
     }
     return mk(CAT_OTHER_BLE, SIG_SWIFT_PAIR, 40, false);
   }
+  // Cameras, cars, e-bikes and scooters by their maker's Bluetooth (2.1.6)
+  for (uint16_t u : kGoProUuids) if (hasUuid16(a, u) || svcData(a, u)) return mk(CAT_CAMERA, SIG_GOPRO, 80, false);
+  if (a.has_company) {
+    if (a.company == kCoGoPro) return mk(CAT_CAMERA, SIG_GOPRO, 75, false);
+    for (uint16_t co : kCameraMakersBle) if (a.company == co) return mk(CAT_CAMERA, SIG_CAMERA_MAKER_BLE, 45, false);
+    for (uint16_t co : kCarMakersBle) if (a.company == co) return mk(CAT_VEHICLE, SIG_CAR_MAKER_BLE, 60, false);
+    for (uint16_t co : kEbikeScooterMakers) if (a.company == co) return mk(CAT_VEHICLE, SIG_EBIKE_SCOOTER, 65, false);
+  }
   for (uint16_t u : kLeAudioUuids) if (hasUuid16(a, u)) return mk(CAT_AUDIO, SIG_LE_AUDIO, 65, false);
   if (hasUuid16(a, kFastPairUuid)) return mk(CAT_AUDIO, SIG_FAST_PAIR, 60, false);
   if (a.has_company) {
@@ -452,6 +460,7 @@ Match classifyBle(const BleAdv& a) {
     if (a.company == kCoSamsung) return mk(pub ? CAT_OTHER_BLE : CAT_PHONE, SIG_SAMSUNG_DEVICE, 40, false);
     if (a.company == kCoGoogle) return mk(pub ? CAT_OTHER_BLE : CAT_PHONE, SIG_GOOGLE_DEVICE, 40, false);
     if (a.company == kCoMicrosoft) return mk(CAT_OTHER_BLE, SIG_MICROSOFT, 30, false);
+    if (a.company == kCoAmazon) return mk(CAT_OTHER_BLE, SIG_AMAZON_BLE, 30, false);
   }
   return mk(CAT_OTHER_BLE, SIG_GENERIC_BLE, 10, false);
 }
@@ -575,7 +584,17 @@ bool parseWifiFrame(const uint8_t* f, size_t len, WifiFrame& w) {
     case 8: w.kind = KIND_WIFI_BEACON; ie += 12; break;
     case 5: w.kind = KIND_WIFI_PROBE_RESP; ie += 12; break;
     case 4: w.kind = KIND_WIFI_PROBE_REQ; break;
-    default: w.kind = KIND_WIFI_OTHER; return true;  // deauth, disassoc, auth, action...
+    case 13:   // action: Apple's AWDL (vendor-specific, 00:17:F2 type 8) and Wi-Fi Direct
+               // (public action 9, WFA 50:6F:9A type 9) say who sent them; the rest are kept as OTHER
+      w.kind = KIND_WIFI_OTHER;
+      if (len >= ie + 5) {
+        const uint8_t* a = f + ie;
+        if (a[0] == 127 && a[1] == 0x00 && a[2] == 0x17 && a[3] == 0xF2 && a[4] == 0x08) w.awdl = true;
+        if (len >= ie + 6 && a[0] == 4 && a[1] == 9 && a[2] == 0x50 && a[3] == 0x6F && a[4] == 0x9A && a[5] == 0x09)
+          w.p2p = true;
+      }
+      return true;
+    default: w.kind = KIND_WIFI_OTHER; return true;  // deauth, disassoc, auth...
   }
   if (ie > len) return false;
   if (w.kind != KIND_WIFI_PROBE_REQ && ie >= 12) {
@@ -649,6 +668,7 @@ bool parseWifiFrame(const uint8_t* f, size_t len, WifiFrame& w) {
         if (l >= 4) {
           const uint32_t v = ((uint32_t)d[0] << 24) | ((uint32_t)d[1] << 16) | ((uint32_t)d[2] << 8) | d[3];
           if (w.n_vendor < countof(w.vendor)) w.vendor[w.n_vendor++] = v;
+          if (v == kWfaP2pVendor) w.p2p = true;
           if (v == kRemoteIdWifiVendor) { w.remote_id = true; w.rid = d + 4; w.rid_len = (uint8_t)(l - 4); }
           if ((v >> 8) == 0x0017F2) w.apple_ie = true;
           if (probe) fp = fnv1a(d, 4, fp);
@@ -752,10 +772,15 @@ Match classifyWifi(const WifiFrame& f) {
   }
   if (!global && f.apple_ie && (f.kind == KIND_WIFI_BEACON || f.kind == KIND_WIFI_PROBE_RESP))
     return mk(CAT_PHONE, SIG_PHONE_HOTSPOT, 55, false);
+  // AirDrop / AirPlay / Sidecar between Apple devices: an iPhone, iPad or Mac nearby (its
+  // AWDL address is private and changes). Wi-Fi Direct: printers, TVs, phones and
+  // cameras sharing straight to each other ("DIRECT-xx-..." networks), kept as Wi-Fi.
+  if (f.awdl) return mk(CAT_PHONE, SIG_APPLE_AWDL, 60, false);
+  if (f.p2p && f.kind != KIND_WIFI_DATA) return mk(CAT_OTHER_WIFI, SIG_WIFI_DIRECT, 40, false);
   if (global && memcmp(tx, kHak5Oui, 3) == 0) return mk(CAT_PENTEST, SIG_PINEAPPLE, 85, true);
   if (global) {
     if (const OuiSig* o = matchOuiSig(kOuiSigs, tx)) return mk(o->cat, o->sig, o->conf, o->strong);
-    { Match m; if (matchCameraOui(tx, CAT_OTHER_WIFI, m)) return m; }
+    { Match m; if (matchCameraOui(tx, m)) return m; }
     if (const Oui* o = matchOui(kFlockWifiOuis, tx)) {
       // The list is almost all Liteon, Silicon Labs and other module makers whose Wi-Fi
       // parts are in countless laptops and TVs. A Flock camera runs an access point, so
@@ -905,6 +930,17 @@ const char* sigName(uint16_t id) {
     case SIG_WIFI_CLIENT_PRIVATE: return "Phone, tablet or laptop on Wi-Fi (private address)";
     case SIG_WIFI_CLIENT: return "Wi-Fi device, connected (fixed address)";
     case SIG_PHONE_MAKER_WIFI: return "Phone or tablet (maker's own address)";
+    case SIG_APPLE_AWDL: return "Apple device using AWDL (AirDrop / AirPlay)";
+    case SIG_WIFI_DIRECT: return "Wi-Fi Direct (printer, TV, phone or camera sharing)";
+    case SIG_AMAZON_BLE: return "Amazon device (Echo, Fire TV, Ring, Kindle)";
+    case SIG_GOPRO: return "GoPro camera";
+    case SIG_CAMERA_MAKER_BLE: return "Camera maker's Bluetooth (Wyze / Arlo, setup or doorbell)";
+    case SIG_CAR_MAKER_BLE: return "Car maker's Bluetooth (phone key, app link)";
+    case SIG_EBIKE_SCOOTER: return "E-bike or scooter (Segway-Ninebot, VanMoof, Shimano)";
+    case SIG_ZIGBEE: return "Zigbee device";
+    case SIG_ZIGBEE_COORD: return "Zigbee network (coordinator / router beacon)";
+    case SIG_THREAD: return "Thread / Matter device";
+    case SIG_154_OTHER: return "802.15.4 radio (unknown protocol)";
     case SIG_AMAZON_WIFI: return "Amazon device (Fire tablet, Echo, Fire TV, Ring)";
     case SIG_PHONE_HOTSPOT: return "Phone hotspot (sharing its connection)";
     case SIG_CAR_WIFI: return "Car Wi-Fi hotspot";

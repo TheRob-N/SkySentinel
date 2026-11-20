@@ -82,20 +82,28 @@ enum Category : uint8_t {
   CAT_OTHER_WIFI,
   CAT_LORA,        // Meshtastic nodes, LoRaWAN trackers (sub-GHz node)
   CAT_VEHICLE,     // cars: Tesla Bluetooth, car Wi-Fi hotspots, head units, OBD dongles
-  CAT_SUBGHZ,      // sub-GHz bursts per band (T-Embed CC1101): fobs, remotes, sensors. Last free bit.
+  CAT_SUBGHZ,      // sub-GHz bursts per band (T-Embed CC1101): fobs, remotes, sensors
+  CAT_CAMERA,      // security cameras and doorbells by maker (Ring, Hikvision, Verkada, ...): 2.1.6
+  CAT_SMARTHOME,   // Zigbee / Thread (802.15.4) smart-home radios, heard by C5 nodes: 2.1.6
   CAT_COUNT
 };
 
-static_assert(CAT_COUNT <= 16, "category masks are 16 bits");
-constexpr uint16_t catBit(uint8_t cat) { return (uint16_t)(1u << cat); }
-constexpr uint16_t kSurveillanceMask =
+// Category masks were 16 bits until 2.1.6. On the wire the low 16 bits stay where they
+// were and the high 16 ride in an optional trailing field, so older boards still parse.
+typedef uint32_t CatMask;
+static_assert(CAT_COUNT <= 32, "category masks are 32 bits");
+constexpr CatMask catBit(uint8_t cat) { return (CatMask)1u << cat; }
+constexpr CatMask kSurveillanceMask =
     catBit(CAT_FLOCK) | catBit(CAT_BODYCAM) | catBit(CAT_TRACKER) | catBit(CAT_GLASSES) |
     catBit(CAT_DRONE) | catBit(CAT_SKIMMER) | catBit(CAT_PENTEST);
-constexpr uint16_t kConsumerMask =
+constexpr CatMask kConsumerMask =
     catBit(CAT_PHONE) | catBit(CAT_AUDIO) | catBit(CAT_WEARABLE) | catBit(CAT_OTHER_BLE);
-constexpr uint16_t kAllCategoriesMask =
+constexpr CatMask kAllCategoriesMask =
     kSurveillanceMask | kConsumerMask | catBit(CAT_OTHER_WIFI) | catBit(CAT_LORA) | catBit(CAT_VEHICLE) |
-    catBit(CAT_SUBGHZ);
+    catBit(CAT_SUBGHZ) | catBit(CAT_CAMERA) | catBit(CAT_SMARTHOME);
+// What a new board starts with, and what an upgrading board gains: everything but Smart
+// home, which takes radio time from Wi-Fi and Bluetooth on the C5 nodes (turn it on).
+constexpr CatMask kDefaultCategoriesMask = kAllCategoriesMask & ~catBit(CAT_SMARTHOME);
 
 // What kind of transmission a sighting came from.
 enum Kind : uint8_t {
@@ -110,19 +118,25 @@ enum Kind : uint8_t {
   KIND_LORA_MESHTASTIC = 0x30,  // sub-GHz node (Heltec Wireless Tracker): addr = node id, zero padded
   KIND_LORAWAN         = 0x31,  //   addr = DevAddr zero padded, or last 6 bytes of DevEUI (join)
   KIND_LORA_MESHCORE   = 0x32,  //   addr = first 6 bytes of the node's public key
+  KIND_ZIGBEE          = 0x50,  // 802.15.4 (C5 node): addr = EUI-64 OUI + last 3 bytes, or 02:15 + PAN + short
+  KIND_THREAD          = 0x51,  //   Thread / Matter (6LoWPAN over 802.15.4)
+  KIND_154_OTHER       = 0x52,  //   other 802.15.4 (unknown upper layer)
   KIND_SUBGHZ          = 0x40,  // sub-GHz bursts on one band (T-Embed): addr = 02:53:47 + kHz (subGhzSighting)
 };
 inline bool kindIsWifi(uint8_t k) { return k >= KIND_WIFI_BEACON && k <= KIND_WIFI_OTHER; }
 inline bool kindIsBle(uint8_t k) { return k == KIND_BLE_ADV; }
 inline bool kindIsLora(uint8_t k) { return (k & 0xF0) == 0x30; }
 inline bool kindIsSubGhz(uint8_t k) { return k == KIND_SUBGHZ; }
-// Radio class used to key devices: 1 = Wi-Fi, 2 = BLE, 3 = BT classic, 4 = LoRa.
+inline bool kindIs154(uint8_t k) { return (k & 0xF0) == 0x50; }
+// Radio class used to key devices: 1 = Wi-Fi, 2 = BLE, 3 = BT classic, 4 = LoRa,
+// 5 = sub-GHz band, 6 = 802.15.4 (Zigbee / Thread).
 inline uint8_t radioClass(uint8_t k) {
   if (kindIsWifi(k)) return 1;
   if (kindIsBle(k)) return 2;
   if (k == KIND_BT_CLASSIC) return 3;
   if (kindIsLora(k)) return 4;
   if (kindIsSubGhz(k)) return 5;
+  if (kindIs154(k)) return 6;
   return 0;
 }
 
@@ -164,6 +178,8 @@ enum EventType : uint8_t {
   EV_WIFI_SPAM      = 4,  // beacon flood (fake networks from one transmitter); channel = mean RSSI
   EV_EVIL_TWIN      = 5,  // one radio (src) answering as several network names (count): Pineapple "PineAP" / karma
   EV_RF_JAM         = 6,  // sub-GHz band held loud (T-Embed CC1101): channel = band, count = MHz x 100, dst[0] = dB over floor
+  EV_GPS_JAM        = 7,  // GPS signals drowned (Heltec): channel = satellites before, count = dB lost, dst[0] = satellites now
+  EV_GPS_SPOOF      = 8,  // GPS saying something it can't (Heltec): channel = GpsSpoofWhy, count = detail (km/h, s, dB spread)
 };
 
 struct Header {
@@ -208,10 +224,10 @@ enum NodeFlags : uint8_t {
   NF_LR_FAST     = 0x08,  // with NF_LONG_RANGE: the 500 kbit/s LR rate (half the airtime, a bit less range)
 };
 
-struct Config {  // 18 bytes + optional node_flags (older nodes ignore it)
+struct Config {  // 18 bytes + optional trailing fields (older nodes ignore them)
   uint8_t  cfg_version   = 0;
   uint8_t  role          = ROLE_BOTH;
-  uint16_t category_mask = 0;
+  CatMask  category_mask = 0;     // low 16 bits in the fixed part, high 16 trailing (2.1.6)
   uint64_t channel_mask  = 0;  // bit i = kChannels[i] (see ss_channels.h)
   uint16_t dwell_ms      = 120;
   uint16_t report_ms     = 1000;
@@ -222,7 +238,7 @@ struct Config {  // 18 bytes + optional node_flags (older nodes ignore it)
   uint8_t  lora_mode     = 0;     // LoRa boards: what to listen to (ss_lora.h LoraMode, 0 = auto)
   uint8_t  lora_slot     = 0;     //   Meshtastic frequency slot, 1-based (0 = the preset's default)
 };
-constexpr size_t kMaxConfigSize = 18 + 1 + 1 + kMaxLabel + 2;
+constexpr size_t kMaxConfigSize = 18 + 1 + 1 + kMaxLabel + 2 + 2;
 
 // Pairing (see ss_pair.h). Sent in the clear: the public keys are public, and the
 // cluster key travels sealed with the X25519 shared secret.
@@ -478,7 +494,7 @@ struct DashAlert {
 };
 struct Dash {
   uint8_t  deploy = 0;            // Deployment (ss_follow.h)
-  uint16_t cats = 0;              // categories switched on
+  CatMask  cats = 0;              // categories switched on (high 16 bits trailing on the wire)
   uint8_t  nodes_online = 0;
   uint8_t  nodes_total = 0;
   uint16_t devices_now = 0;
