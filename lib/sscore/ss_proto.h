@@ -122,6 +122,7 @@ enum Kind : uint8_t {
   KIND_THREAD          = 0x51,  //   Thread / Matter (6LoWPAN over 802.15.4)
   KIND_154_OTHER       = 0x52,  //   other 802.15.4 (unknown upper layer)
   KIND_SUBGHZ          = 0x40,  // sub-GHz bursts on one band (T-Embed): addr = 02:53:47 + kHz (subGhzSighting)
+  KIND_TPMS            = 0x41,  // a tire pressure sensor (T-Embed): addr = 02 + maker + 32-bit ID (ss_tpms.h)
 };
 inline bool kindIsWifi(uint8_t k) { return k >= KIND_WIFI_BEACON && k <= KIND_WIFI_OTHER; }
 inline bool kindIsBle(uint8_t k) { return k == KIND_BLE_ADV; }
@@ -129,7 +130,7 @@ inline bool kindIsLora(uint8_t k) { return (k & 0xF0) == 0x30; }
 inline bool kindIsSubGhz(uint8_t k) { return k == KIND_SUBGHZ; }
 inline bool kindIs154(uint8_t k) { return (k & 0xF0) == 0x50; }
 // Radio class used to key devices: 1 = Wi-Fi, 2 = BLE, 3 = BT classic, 4 = LoRa,
-// 5 = sub-GHz band, 6 = 802.15.4 (Zigbee / Thread).
+// 5 = sub-GHz band, 6 = 802.15.4 (Zigbee / Thread), 7 = tire pressure sensor.
 inline uint8_t radioClass(uint8_t k) {
   if (kindIsWifi(k)) return 1;
   if (kindIsBle(k)) return 2;
@@ -137,6 +138,7 @@ inline uint8_t radioClass(uint8_t k) {
   if (kindIsLora(k)) return 4;
   if (kindIsSubGhz(k)) return 5;
   if (kindIs154(k)) return 6;
+  if (k == KIND_TPMS) return 7;
   return 0;
 }
 
@@ -180,6 +182,9 @@ enum EventType : uint8_t {
   EV_RF_JAM         = 6,  // sub-GHz band held loud (T-Embed CC1101): channel = band, count = MHz x 100, dst[0] = dB over floor
   EV_GPS_JAM        = 7,  // GPS signals drowned (Heltec): channel = satellites before, count = dB lost, dst[0] = satellites now
   EV_GPS_SPOOF      = 8,  // GPS saying something it can't (Heltec): channel = GpsSpoofWhy, count = detail (km/h, s, dB spread)
+  EV_CSA_SPOOF      = 9,  // fake "switch channel" beacons for a network (src = its BSSID): channel = heard on,
+                          // count = fake beacons, dst[0] = the channel they push clients to
+  EV_SAE_FLOOD      = 10, // WPA3 handshake (SAE commit) flood at an access point (dst): channel, count = per second
 };
 
 struct Header {

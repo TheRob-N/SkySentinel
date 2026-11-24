@@ -80,6 +80,7 @@ struct Settings {
   uint8_t brightNight = 2;  // night backlight 5 / 10 / 25 / 50 %
   uint8_t colAlert = 6;     // Purple: a new alert from the cluster
   uint8_t alertFlash = 1;   // how long that pulses: 10 s / 30 s / 1 min / 5 min / until a button
+  uint8_t tpms = 1;         // tire sensors: off / 315 MHz / 433.92 MHz
 } static set_;
 
 static const uint8_t kBrightPwm[] = {64, 128, 192, 255};
@@ -144,6 +145,7 @@ static void loadSettings() {
   s.night = s.night ? 1 : 0;
   if (s.brightNight > 3) s.brightNight = 2;
   if (s.alertFlash > 4) s.alertFlash = 1;
+  if (s.tpms > 2) s.tpms = 1;
   s.ver = 3;
   set_ = s;
 }
@@ -194,6 +196,7 @@ static void applyRadioSettings() {
   subghz::setBurstDb(kSensDb[set_.sens]);
   subghz::setBurstSamples(kLenSamples[set_.len]);
   subghz::setJamAlerts(set_.jamAlert);
+  subghz::setTpms(set_.tpms);
 }
 static void backlight(bool on) {
   analogWrite(tembed::TFT_BL, !on ? 0 : set_.night ? kNightPwm[set_.brightNight] : kBrightPwm[set_.bright]);
@@ -433,7 +436,7 @@ static const char* const kPowerHelp[PM_COUNT] = {"Keeps scanning. BACK: on", "Ra
                                                  "USB turns it on again", "", ""};
 enum : uint8_t {
   SI_THEME, SI_BRIGHT, SI_TIMEOUT, SI_START, SI_FLIP, SI_LED, SI_LED_BRIGHT, SI_COL_JAM, SI_COL_BURST, SI_COL_LOST,
-  SI_COL_ALERT, SI_ALERT_FLASH, SI_SENS, SI_LEN, SI_BAND0, SI_JAM_ALERT = SI_BAND0 + kSubGhzBands, SI_DONE, SI_COUNT
+  SI_COL_ALERT, SI_ALERT_FLASH, SI_SENS, SI_LEN, SI_BAND0, SI_JAM_ALERT = SI_BAND0 + kSubGhzBands, SI_TPMS, SI_DONE, SI_COUNT
 };
 static uint8_t menu_ = M_NONE;
 static uint8_t menuSel_ = 0, menuTop_ = 0;
@@ -474,6 +477,7 @@ static void settingText(uint8_t k, char* label, size_t ln, char* value, size_t v
     case SI_SENS: snprintf(label, ln, "Burst louder than"); snprintf(value, vn, "%s", kSensNames[set_.sens]); break;
     case SI_LEN: snprintf(label, ln, "Burst longer than"); snprintf(value, vn, "%s", kLenNames[set_.len]); break;
     case SI_JAM_ALERT: snprintf(label, ln, "Jamming to master"); snprintf(value, vn, "%s", set_.jamAlert ? "On" : "Off"); break;
+    case SI_TPMS: snprintf(label, ln, "Tire sensors"); snprintf(value, vn, "%s", set_.tpms == 2 ? "433.92" : set_.tpms ? "315 MHz" : "Off"); break;
     case SI_DONE: snprintf(label, ln, "Done"); value[0] = 0; break;
     default:
       if (k >= SI_BAND0 && k < SI_BAND0 + kSubGhzBands) {
@@ -513,6 +517,7 @@ static void settingNext(uint8_t k) {
     case SI_SENS: set_.sens = (uint8_t)((set_.sens + 1) % 5); break;
     case SI_LEN: set_.len = (uint8_t)((set_.len + 1) % 5); break;
     case SI_JAM_ALERT: set_.jamAlert ^= 1; break;
+    case SI_TPMS: set_.tpms = (uint8_t)((set_.tpms + 1) % 3); break;
     case SI_DONE: menu_ = M_NONE; shown_ = 255; return;
     default:
       if (k >= SI_BAND0 && k < SI_BAND0 + kSubGhzBands) set_.bands ^= (uint8_t)(1u << kSubGhzBandOrder[k - SI_BAND0]);
@@ -902,7 +907,11 @@ static void pageHome() {
   snprintf(b, sizeof(b), "SUB-GHZ  %s", !subghz::ready() ? "radio not found" : !subghz::running() ? "off (category)"
                                          : !set_.bands ? "all bands off" : jam ? "JAMMING" : "watching");
   row(78, 22, 2, !subghz::ready() ? CRIT : jam ? CRIT : subghz::running() && set_.bands ? ACCENT : MUTED, b);
-  snprintf(b, sizeof(b), "%lu bursts  %lu sweeps", (unsigned long)total, (unsigned long)subghz::sweeps());
+  if (set_.tpms)
+    snprintf(b, sizeof(b), "%lu bursts  %lu sweeps  tires %lu/%lu", (unsigned long)total, (unsigned long)subghz::sweeps(),
+             (unsigned long)subghz::tpmsDecoded(), (unsigned long)subghz::tpmsWindows());
+  else
+    snprintf(b, sizeof(b), "%lu bursts  %lu sweeps", (unsigned long)total, (unsigned long)subghz::sweeps());
   row(104, 14, 1, TEXT, b);
   // The cluster's latest alert, if there's a fresh one (more on ALERTS)
   if (dashMs_ && now - dashMs_ < 30000 && dash_.alert.seq && dash_.alert.level >= 2 && dash_.alert.age_s < 600) {

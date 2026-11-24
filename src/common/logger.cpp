@@ -4,6 +4,7 @@
 #include <Preferences.h>
 
 #include "core_common.h"
+#include "ss_gps.h"
 
 namespace ss {
 namespace logger {
@@ -14,9 +15,10 @@ static constexpr size_t kMaxFile = 384 * 1024;
 static constexpr uint32_t kFlushMs = 5000;
 static constexpr uint32_t kPosMaxAgeMs = 120000;    // older than this: not "where we are" any more
 static constexpr uint32_t kTrackEveryMs = 60000;
-static constexpr int32_t kTrackMoveE7 = 450;        // ~50 m
+static constexpr double kTrackMoveM = 50.0;         // a track point once we've moved this far
 
 static bool started_ = false, fsOk_ = false, enabled_ = true;
+static DailySeen* seen_ = nullptr;   // master only: allocated by begin()
 static Preferences* prefs_ = nullptr;
 static Sink sink_ = nullptr;
 static uint32_t seq_ = 0, written_ = 0, dropped_ = 0, boot_ = 0;
@@ -101,6 +103,7 @@ static void fromDevice(LogRec& r, const Device& d) {
 
 void begin(Preferences* prefs) {
   prefs_ = prefs;
+  if (!seen_) seen_ = new DailySeen();
   enabled_ = !prefs || prefs->getBool("logon", true);
   boot_ = prefs ? prefs->getUInt("logboot", 0) + 1 : 0;
   if (prefs) prefs->putUInt("logboot", boot_);
@@ -142,13 +145,32 @@ void setClockFromHost(uint32_t utc, uint32_t now) {
 
 uint32_t utcNow(uint32_t now) { return utcBase_ ? utcBase_ + now / 1000 : 0; }
 
-void device(const Device& d, bool upgraded) {
-  if (!started_ || !(kSurveillanceMask & catBit(d.category))) return;
+static void logDevice(const Device& d, uint16_t why) {
   LogRec r;
   fill(r, LK_DEVICE, millis());
   fromDevice(r, d);
-  r.a = upgraded ? 1 : 0;
+  r.a = why;
   put(r);
+}
+
+bool raisesNotice(const Device& d) {
+  // The console's rule: a surveillance-category match at 40 or more (or a strong one)
+  // is at least a notice. Following and lingering alerts are logged on their own.
+  return (kSurveillanceMask & catBit(d.category)) && (d.conf >= 40 || (d.flags & SF_STRONG_MATCH));
+}
+
+void device(const Device& d, bool upgraded) {
+  if (!started_ || !raisesNotice(d)) return;
+  const uint32_t utc = utcNow(millis());
+  if (seen_ && utc) seen_->firstToday(d.id, (uint16_t)(utc / 86400));
+  logDevice(d, upgraded ? 1 : 0);
+}
+
+void deviceSeen(const Device& d) {
+  if (!started_ || !seen_ || !raisesNotice(d)) return;
+  const uint32_t utc = utcNow(millis());
+  if (!utc) return;   // no date yet: "today" means nothing
+  if (seen_->firstToday(d.id, (uint16_t)(utc / 86400))) logDevice(d, 2);
 }
 
 void event(const Event& ev) {
@@ -157,6 +179,7 @@ void event(const Event& ev) {
   const uint8_t kind = ev.type == EV_BLE_SPAM ? LK_BLE_SPAM : ev.type == EV_WIFI_SPAM ? LK_WIFI_SPAM
                      : ev.type == EV_EVIL_TWIN ? LK_EVIL_TWIN : ev.type == EV_RF_JAM ? LK_RF_JAM
                      : ev.type == EV_GPS_JAM ? LK_GPS_JAM : ev.type == EV_GPS_SPOOF ? LK_GPS_SPOOF
+                     : ev.type == EV_CSA_SPOOF ? LK_CSA_SPOOF : ev.type == EV_SAE_FLOOD ? LK_SAE_FLOOD
                      : ev.type == EV_DEAUTH_FLOOD ? LK_DEAUTH : LK_DISASSOC;
   fill(r, kind, millis());
   r.has_mac = true;
@@ -173,6 +196,13 @@ void event(const Event& ev) {
   } else if (kind == LK_GPS_SPOOF) {
     r.a = ev.count;
     r.b = ev.channel;
+  } else if (kind == LK_CSA_SPOOF) {
+    r.a = ev.count;
+    r.b = ev.dst[0];
+  } else if (kind == LK_SAE_FLOOD) {
+    memcpy(r.mac, ev.dst, 6);   // the access point under attack (senders are made up)
+    r.a = ev.channel;
+    r.b = ev.count;
   } else if (kind == LK_EVIL_TWIN) {
     r.a = ev.count;
     r.b = ev.channel;
@@ -203,8 +233,8 @@ void poll(uint32_t now) {
   }
   if (!enabled_ || !havePos_ || now - posMs_ > kPosMaxAgeMs) return;
   if (tracked_ && now - trackMs_ < kTrackEveryMs) return;
-  const int32_t dl = lat_ - trackLat_, dn = lon_ - trackLon_;
-  if (tracked_ && abs(dl) < kTrackMoveE7 && abs(dn) < kTrackMoveE7) return;
+  // (Was 450e-7 degrees: about 5 m, not 50, so a parked GPS's wander logged a point a minute.)
+  if (tracked_ && gpsDistanceM(lat_ / 1e7, lon_ / 1e7, trackLat_ / 1e7, trackLon_ / 1e7) < kTrackMoveM) return;
   tracked_ = true;
   trackMs_ = now;
   trackLat_ = lat_;

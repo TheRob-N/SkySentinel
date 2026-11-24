@@ -12,6 +12,10 @@
 //   Flock BLE UUID, Flipper ids, camera makers, Meta FEB7/FEB8, Find My FD44:
 //                         valleytechsolutions/Dragon-Detector (identifiers only; camera
 //                         blocks re-checked against the IEEE registry)
+//   Skimmer module blocks, HC-03, newer AirPods ids, Apple hotspot / AirPlay messages:
+//                         7h30th3r0n3/Evil-M5Project (MIT; identifiers only)
+//   Hacking-firmware default names: read from the Evil-M5Project, Bruce, GhostESP and
+//                         ESP32 Marauder sources; Chameleon names from RfidResearchGroup
 //
 // Changes from flock.h:
 //  * 00:25:DF moved out of the Flock BLE list into Axon (it is Axon/TASER's OUI).
@@ -80,6 +84,31 @@ static const uint8_t kFlipperOui[3] = {0x0C, 0xFA, 0x22};
 static const uint16_t kCoFlipper = 0x0E29;            // Flipper Devices Inc.
 static const uint16_t kFlipperUuidFirst = 0x3080, kFlipperUuidLast = 0x3083;
 static const uint16_t kFlipperAppearance = 0x8600;
+
+// ESP32 hacking firmwares by the names they broadcast out of the box, read from their
+// source (Nov 2026): Evil-M5Project (device and portal names), Bruce (its web AP, karma,
+// shell and sniffer APs, its BLE name), GhostESP (its AP and BLE bridge), ESP32 Marauder
+// (its evil portal's default network). exact: the whole name, else a prefix. A user can
+// rename all of these, so a miss means nothing.
+struct ToolName { const char* s; bool exact; uint8_t conf; };
+static const ToolName kAttackFwBleNames[] = {
+  {"Evil-Cardputer", false, 85}, {"Evil-M5", false, 85}, {"Evil-StickC", false, 85},
+  {"Evil-AtomS3", false, 85}, {"Evil-CYD", false, 85}, {"Evil-Face", false, 85},
+  {"Bruce", true, 75}, {"BruceSniffer", true, 85}, {"BRUCE-PN532", false, 85},
+  {"GhostESP", false, 85},
+};
+static const ToolName kAttackFwSsids[] = {
+  {"Evil-Cardputer", false, 85}, {"Evil-M5", false, 85}, {"Evil-StickC", false, 85},
+  {"Evil-AtomS3", false, 85}, {"Evil-CYD", false, 85}, {"Evil-Face", false, 85},
+  {"EvilRelay", true, 85}, {"EvilChatMesh", false, 85},
+  {"BruceNet", true, 85}, {"BruceKarma", true, 90}, {"BruceShell", true, 90},
+  {"BruceSniffer", true, 90}, {"BruceAttack", true, 90}, {"BRUCE-UDP", true, 90}, {"BruceBeacon", false, 80},
+  {"GhostNet", true, 80}, {"GhostESP", false, 85},
+  {"PORTAL", true, 45},   // Marauder's evil portal default: weak, it's a plain word
+};
+// Chameleon Ultra / Lite (RFID and NFC card cloners) advertise their model name
+// (RfidResearchGroup firmware, common/device_info.h).
+static const char* const kChameleonNames[] = {"ChameleonUltra", "ChameleonLite"};
 
 // Flock: a 128-bit service UUID seen on Flock BLE accessories,
 // e8ccbb38-9532-46a8-9fe5-1814df172e6f, as it sits in an advert (byte-reversed).
@@ -212,6 +241,8 @@ struct AppleModel { uint16_t id; const char* name; };
 static const AppleModel kAppleAudioModels[] = {
   {0x0220, "AirPods"}, {0x0F20, "AirPods (2nd gen)"}, {0x1320, "AirPods (3rd gen)"},
   {0x0E20, "AirPods Pro"}, {0x1420, "AirPods Pro (2nd gen)"}, {0x0A20, "AirPods Max"},
+  {0x1920, "AirPods 4"}, {0x1B20, "AirPods 4 (ANC)"}, {0x2420, "AirPods Pro (2nd gen, USB-C)"},
+  {0x2720, "AirPods Pro 3"}, {0x1F20, "AirPods Max (USB-C)"},
   {0x0320, "Powerbeats3"}, {0x0B20, "Powerbeats Pro"}, {0x0520, "BeatsX"}, {0x1020, "Beats Flex"},
   {0x0620, "Beats Solo3"}, {0x0C20, "Beats Solo Pro"}, {0x0920, "Beats Studio3"},
   {0x1720, "Beats Studio Pro"}, {0x1120, "Beats Studio Buds"}, {0x1620, "Beats Studio Buds+"},
@@ -232,13 +263,19 @@ static const uint8_t kAppleHandoff = 0x0C;
 static const uint8_t kAppleNearbyAction = 0x0F;
 static const uint8_t kAppleNearbyInfo = 0x10;
 static const uint8_t kAppleFindMy = 0x12;            // offline finding
+static const uint8_t kAppleAirPlayTarget = 0x09;     // Apple TV, HomePod, AirPlay speakers
+static const uint8_t kAppleTetheringSource = 0x0E;   // an iPhone / iPad offering Instant Hotspot
 
 // Cheap serial-over-BLE modules seen in some card skimmers (names are their defaults).
 // Low confidence on their own: hobby projects use the same modules.
 static const char* const kSerialModuleNames[] = {"HC-08", "BT05", "MLT-BT05", "JDY-", "HMSoft"};
 // Classic serial (SPP) modules, default names. HC-05 / HC-06 are what most card
 // skimmers found in gas pumps use.
-static const char* const kClassicSerialNames[] = {"HC-05", "HC-06", "linvor", "RNBT-", "BT04", "JDY-30", "JDY-31", "SPP-CA"};
+static const char* const kClassicSerialNames[] = {"HC-05", "HC-06", "HC-03", "linvor", "RNBT-", "BT04", "JDY-30", "JDY-31", "SPP-CA"};
+// Address blocks those modules ship with (as listed by Evil-M5Project's skimmer
+// detector): 00:18:E4 (YIGUANG), 20:16:04 (unregistered, HC-06 clones), 00:11:22.
+// Only raise a name match's confidence: hobby boards carry them too.
+static const uint8_t kSerialModuleOuis[][3] = {{0x00, 0x18, 0xE4}, {0x20, 0x16, 0x04}, {0x00, 0x11, 0x22}};
 
 // ---------------------------------------------------------------------------
 // Vendor signatures (body cams, glasses, drones, ALPR). Sources:

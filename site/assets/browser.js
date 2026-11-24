@@ -1,9 +1,12 @@
 // Browser check: flashing and the USB console use Web Serial: Chromium-based desktop
-// browsers, and Firefox 151 or newer on desktop. Shown at the top of every page when it's missing.
+// browsers, and Firefox 151 or newer on desktop. Shown at the top of the page when it's
+// missing: on a desktop on every page, on a phone only where USB is the point (the
+// install page; the console has its own), since a phone reading about SkySentinel is fine.
 (() => {
   if ("serial" in navigator) return;
   const ua = navigator.userAgent;
   const mobile = /Android|iPhone|iPad|Mobile/i.test(ua);
+  if (mobile && !document.documentElement.hasAttribute("data-usb-page")) return;
   const ff = /Firefox\/(\d+)/.exec(ua);
   const name = ff ? "Firefox" : /Edg\//.test(ua) ? "Edge" : /OPR\//.test(ua) ? "Opera"
     : /Chrome\//.test(ua) ? "this Chromium browser" : /Safari\//.test(ua) ? "Safari" : "this browser";

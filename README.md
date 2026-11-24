@@ -7,6 +7,8 @@ and GPS jamming, and much more. It runs on $10 to $40 ESP32 boards, alone or as 
 cluster, and shows everything in a web console (over USB, or from your phone over the
 board's own Wi-Fi) and on optional screens.
 
+![The SkySentinel console: radar, alert banner, category tiles and the live device list](docs/images/console.webp)
+
 - **Install from your browser:** https://skysentinel.neyhard.com (no toolchain needed)
 - **How-tos:** https://skysentinel.neyhard.com/docs.html
 - **What's new:** [CHANGELOG.md](CHANGELOG.md) and [Releases](../../releases)
@@ -19,6 +21,25 @@ Bluetooth active scanning), and the Classic Bluetooth node's inquiries.
 > **2.0 was a ground-up rewrite.** The original single-board CYD sketch (v0.5.9) lives on the
 > [`legacy-cyd`](../../tree/legacy-cyd) branch and the `v0.5.9` tag.
 
+## Screenshots
+
+The console pictures use made-up devices.
+
+| | |
+|---|---|
+| ![The cluster view](docs/images/cluster.webp) | ![A drone's Remote ID, decoded](docs/images/drone.webp) |
+| **The cluster:** each board's link, loss, memory and radios | **A drone's Remote ID:** serial number, position, the pilot's position |
+| ![Night mode](docs/images/console-night.webp) | ![The T-Embed CC1101 boot screen](docs/images/tembed-boot.webp) |
+| **Night mode:** red on black, for a dark car | **T-Embed CC1101:** the boot screen, then six pages on the jog wheel |
+
+<p>
+  <img src="docs/images/phone.webp" width="240" alt="The console on a phone">
+  <img src="docs/images/phone-devices.webp" width="240" alt="The device list on a phone">
+</p>
+
+On a phone, join the master's own Wi-Fi and the same console opens by itself, in any
+browser. No app, no internet.
+
 ## What it finds
 
 | Category | Examples |
@@ -29,9 +50,9 @@ Bluetooth active scanning), and the Classic Bluetooth node's inquiries.
 | **Camera glasses** | Ray-Ban and Oakley Meta, Snap Spectacles, Vuzix |
 | **Drones** | FAA Remote ID decoded (serial, position, height, speed, the pilot's position), DJI DroneID |
 | **Skimmers** | HC-05 / HC-06-style serial Bluetooth radios found in gas pumps |
-| **Pentest gear and attacks** | Flipper Zero (even renamed), Wi-Fi Pineapple, Pwnagotchi; evil twins, beacon and Bluetooth spam, deauth floods, sub-GHz jamming, GPS jamming and spoofing |
+| **Pentest gear and attacks** | Flipper Zero (even renamed), Wi-Fi Pineapple, Pwnagotchi, Evil-M5 / Bruce / GhostESP gear, Chameleon card cloners; evil twins, beacon and Bluetooth spam, deauth floods, forged channel switches, WPA3 floods, sub-GHz jamming, GPS jamming and spoofing |
 | **Cameras** | Doorbells and home / business cameras by maker: Ring, Hikvision, Verkada, Wyze, Arlo, Axis, Blink, GoPro |
-| **Vehicles** | Phone-key cars (Tesla and 13 other makers), car hotspots and stereos, OBD-II dongles, e-bikes and scooters |
+| **Vehicles** | Tire pressure sensors (T-Embed CC1101: Toyota, Ford, GM, Hyundai / Kia, Honda, Jeep and more), phone-key cars (Tesla and 13 other makers), car hotspots and stereos, OBD-II dongles, e-bikes and scooters |
 | **Smart home mesh** | Zigbee and Thread / Matter devices and networks (C5 nodes) |
 | **LoRa** | Meshtastic nodes (names and positions on the public channel), MeshCore, LoRaWAN devices |
 | **Sub-GHz** | Fob, remote and sensor bursts on 314.35 to 915 MHz (T-Embed CC1101) |
@@ -86,7 +107,7 @@ pio run -e heltec -t upload   # Heltec Wireless Tracker
 pio run -e tembed -t upload   # LilyGO T-Embed CC1101
 pio run -e cyd -t upload      # CYD / ESP32-32E
 pio run -e classic -t upload  # ESP32-WROOM-32 DevKit
-make -C test/host             # host tests (2,400+ checks under ASan / UBSan)
+make -C test/host             # host tests (2,500+ checks under ASan / UBSan)
 ```
 
 Add `--upload-port /dev/serial/by-id/...` when more than one board is plugged in.
@@ -99,7 +120,7 @@ Layout, tests and the website build: [docs/development.md](docs/development.md).
 | [docs/cluster.md](docs/cluster.md) | Roles, pairing, how work is shared, the link channel, Long Range, the cluster view |
 | [docs/detection.md](docs/detection.md) | Signatures and sources, what the radios give away, following alerts, how devices are filed |
 | [docs/boards.md](docs/boards.md) | Classic node, CYD dashboard, Heltec LoRa node, T-Embed sub-GHz node |
-| [docs/console.md](docs/console.md) | The web console, Wi-Fi access, serial commands, logging, the detection log and SD cards |
+| [docs/console.md](docs/console.md) | The web console, Wi-Fi access, serial commands, logging, the detection log, HISTORY and SD cards |
 | [docs/development.md](docs/development.md) | Code layout, building, tests, the website |
 
 **HELP** in the console has the plain-language version: what each board contributes, how
@@ -110,8 +131,9 @@ to read the screen, how devices are identified, and what SkySentinel can't see.
 Signatures are built from public data: the IEEE OUI registry, the Bluetooth SIG company
 and service lists, the Flock research credited in `ss_sigdata.h` (DeFlock, ouispy-detector,
 flock-you, GainSec's Raven work, nyanBOX), the Nearby Glasses app, the DJI DroneID research and
-[Dragon Detector](https://github.com/valleytechsolutions/Dragon-Detector) (identifiers
-only). Details in [docs/detection.md](docs/detection.md) and `lib/sscore/ss_sigdata.h`.
+[Dragon Detector](https://github.com/valleytechsolutions/Dragon-Detector) and
+[Evil-M5Project](https://github.com/7h30th3r0n3/Evil-M5Project) (identifiers only), and the
+rtl_433 project's TPMS wire formats (our own decoder). Details in [docs/detection.md](docs/detection.md) and `lib/sscore/ss_sigdata.h`.
 Third-party code keeps its own license ([THIRD_PARTY.md](THIRD_PARTY.md)).
 
 ## License

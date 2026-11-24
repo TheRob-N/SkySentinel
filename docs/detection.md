@@ -32,7 +32,8 @@ against IEEE before it went in. Details and credits are in `ss_sigdata.h`.
 | Glasses | Luxottica maker ID 0x0D53 and OUI 98:59:49 (Ray-Ban / Oakley Meta; surest with a Meta service UUID alongside), Snap 0x03C2 / FE45, Meta 0x058E / FD5F (also Quest headsets), Vuzix 0x060C | Meta Platforms 0x01AB, Facebook service UUIDs FEB7 / FEB8, Meta and Vuzix OUIs |
 | Drones | Remote ID (BLE and Wi-Fi), DJI DroneID vendor element 26:37:12 | DJI maker ID 0x08AA (also Osmo cameras), DJI, Parrot and Skydio OUIs, drone hotspot names (TELLO-, DJI-, Mavic, Anafi, Bebop, Skydio) |
 | ALPR | Flock Safety's own OUI B4:1E:52, Flock accessory BLE service e8ccbb38-9532-46a8-9fe5-1814df172e6f | Genetec (AutoVu ALPR maker) OUIs (weak, never alert alone) |
-| Pentest | Flipper Zero by any of: its case-color service UUID (0x3080–0x3083), Flipper Devices maker ID 0x0E29, OUI 0C:FA:22 (public address), the "Flipper " name. Two of them together (or with its appearance 0x8600) is surer still | |
+| Pentest | Hacking firmware by its stock names (Evil-M5Project, Bruce, GhostESP), Chameleon Ultra / Lite RFID cloners | Marauder's evil portal default network "PORTAL" |
+| Pentest (Flipper) | Flipper Zero by any of: its case-color service UUID (0x3080–0x3083), Flipper Devices maker ID 0x0E29, OUI 0C:FA:22 (public address), the "Flipper " name. Two of them together (or with its appearance 0x8600) is surer still | |
 | Cameras | | Camera makers by OUI, named in the details: Ring, Hikvision, Verkada, Wyze, Arlo, Axis, Blink. Their own category since 2.1.6 (weak, never alert alone), so neighbors' doorbells and NVRs don't fill the ALPR count. Not counted as surveillance |
 
 ### From Dragon Detector (November 2026)
@@ -90,6 +91,41 @@ WatchGuard Technologies (firewalls), not WatchGuard Video.
   detection log (`gps_jam`, `gps_spoof`); one of each kind per 10 minutes. A garage,
   tunnel or heavy roof also hides the sky, so a parked board is the reliable judge; a
   careful spoofer that takes the receiver over slowly won't trip it.
+
+## From Evil-M5Project and friends (November 2026)
+
+Read from the source of [Evil-M5Project](https://github.com/7h30th3r0n3/Evil-M5Project)
+(MIT; identifiers only) and of the hacking firmwares it sits beside:
+
+- **Hacking firmware by name** (Pentest gear): Evil-M5Project's device and portal names
+  (`Evil-Cardputer`, `Evil-M5Core2`, `Evil-StickC`, `Evil-AtomS3`, `Evil-CYD`, `EvilRelay`,
+  `EvilChatMesh`), Bruce's (`BruceNet` web AP, `BruceKarma`, `BruceShell`, `BruceSniffer`,
+  `BruceAttack`, `BRUCE-UDP`, `BruceBeacon...`, BLE `Bruce`), GhostESP's (`GhostNet`,
+  `GhostESP...`) and ESP32 Marauder's evil portal default `PORTAL` (weak: a plain word).
+  Wi-Fi names count only from an access point, never from a phone asking for one. A user
+  can rename any of them, so a miss means nothing.
+- **Chameleon Ultra / Lite**, the RFID and NFC card cloners: their BLE name (from the
+  RfidResearchGroup firmware).
+- **Skimmers:** `HC-03` joins the serial-module names. A name match from one of the
+  modules' stock address blocks (00:18:E4 YIGUANG, 20:16:04, 00:11:22) scores higher;
+  the block alone never counts, because hobby boards carry them too.
+- **AirPods 4, 4 (ANC), Pro (2nd gen, USB-C), Pro 3, Max (USB-C)** by model number.
+- **Instant Hotspot:** an iPhone or iPad offering its hotspot sends Apple message 0x0E with
+  its battery and signal bars: Phones, named "iPhone hotspot 80% 3 bars".
+- **AirPlay targets:** Apple TVs, HomePods and AirPlay speakers (Apple message 0x09), with
+  the LAN address they announce ("AirPlay 192.168.1.40").
+- **Forged channel switch** (an attack in the same family as deauth): fake beacons with a
+  Channel Switch Announcement tell a network's devices to move to another channel. A
+  real switch puts the announcement in every beacon until the access point leaves; a
+  forged one shows up alongside the real network's ordinary beacons on the same channel.
+  Three or more switch beacons mixed with two or more ordinary ones within 3 s raises
+  "fake channel switch", once per 5 minutes per network (`csa_spoof` in the log).
+- **WPA3 handshake flood:** WPA3 (SAE) commit frames at one access point, 15 or more a
+  second, from made-up addresses, to tie it up. A phone joining sends one or two.
+  `sae_flood` in the log, once per 10 s. Both need the Pentest category on.
+- **Tire pressure sensors** on the T-Embed CC1101: see the Sub-GHz node in
+  [boards.md](boards.md). Wire formats from rtl_433's TPMS work (preambles, layouts and
+  checks are facts about the sensors); the decoder is our own, written for SkySentinel.
 
 ## Device details: what the radios give away
 

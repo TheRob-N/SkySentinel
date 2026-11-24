@@ -91,11 +91,14 @@
       <li><b>Wi-Fi beacon spam:</b> a burst of fake networks from one transmitter (Flipper, Marauder, ESP32 spam tools). The banner counts them as they come;
         the fakes are kept out of the counts and the list.</li>
       <li><b>Deauth and disassociation floods:</b> someone knocking devices off their Wi-Fi.</li>
+      <li><b>Forged channel switch:</b> fake "move to channel X" beacons sent alongside a real network's own, to push its devices off it.</li>
+      <li><b>WPA3 handshake flood:</b> a burst of WPA3 join requests from made-up addresses, to tie up an access point.</li>
       <li><b>Sub-GHz jamming</b> (T-Embed CC1101): a fob or alarm band held loud for seconds, as car-theft jammers do.</li>
       <li><b>GPS jamming and spoofing</b> (Heltec Wireless Tracker): the satellites drowned out while the receiver keeps running, or a position or clock that
         jumps impossibly, or every satellite arriving equally (or impossibly) strong. A parked board is the reliable judge: a garage or tunnel also hides the sky.</li>
       <li><b>Bluetooth spam:</b> a burst of fake AirPods / Android / Windows pop-ups from one transmitter.</li>
-      <li><b>Flipper Zero</b> (when its Bluetooth is on, the default; found by what it sends, so a renamed one still shows), <b>Wi-Fi Pineapple</b> (by Hak5's address), <b>Pwnagotchi</b> (its "hello" beacons).
+      <li><b>Flipper Zero</b> (when its Bluetooth is on, the default; found by what it sends, so a renamed one still shows), <b>Wi-Fi Pineapple</b> (by Hak5's address), <b>Pwnagotchi</b> (its "hello" beacons),
+        <b>Evil-M5, Bruce and GhostESP</b> gear by their stock device and network names (rename one and it won't show), <b>Chameleon Ultra / Lite</b> card cloners.
         A device whose radios are silent can't be detected by anything that only listens.</li>
     </ul>
     <h3>Following and lingering</h3>
@@ -108,7 +111,9 @@
       <li><b>Phones and tablets:</b> by Bluetooth, by Wi-Fi probes (addresses that change are stitched back together), by their traffic while
         connected to Wi-Fi (private addresses included), by maker (the IEEE registry), and phone hotspots ("Rob's iPhone", "Galaxy S24").</li>
       <li><b>Vehicles:</b> Teslas and 13 other car makers' phone-key and app Bluetooth, car makers' Wi-Fi hotspots, car stereos, OBD-II dongles,
-        and e-bikes and scooters (Segway-Ninebot, VanMoof, Shimano drive units).</li>
+        and e-bikes and scooters (Segway-Ninebot, VanMoof, Shimano drive units).
+        With a T-Embed CC1101: <b>tire pressure sensors</b> (Toyota / Lexus, Ford, GM, Hyundai / Kia, Honda, Jeep / Chrysler and other Schrader sensors), each tire by its fixed ID,
+        so a car that goes where you go raises a following alert. Mark your own car's four tires THIS IS MINE.</li>
       <li><b>AirDrop and Wi-Fi Direct:</b> iPhones, iPads and Macs using Apple's AWDL (AirDrop, AirPlay), and printers, TVs and phones sharing over Wi-Fi Direct.</li>
       <li><b>Smart home mesh</b> (C5 nodes, off by default): Zigbee and Thread / Matter devices on the C5's 802.15.4 radio, with the network each is on.
         Turning it on gives each C5 node's radio to it for 1.5 s of every 15 s.</li>
@@ -128,7 +133,7 @@
     <p>Everything else works anywhere. In particular the console over the master's <b>own Wi-Fi</b> needs no Web Serial: join the network
       <b>SkySentinel-XXXX</b> from any phone or laptop, in any browser, and the console opens by itself (or go to <code>http://192.168.4.1</code>).
       So an older browser only matters for the few minutes it takes to flash.</p>
-    <p>Each page shows a yellow <b>WRONG BROWSER FOR USB</b> bar when it can't reach USB.</p>
+    <p>When a browser can't reach USB, a yellow <b>WRONG BROWSER FOR USB</b> bar says so: on a desktop at the top of every page, on a phone on the install page and in the console.</p>
 
     <h2 id="install">Installing firmware</h2>
     <p><b>Update</b> keeps the board's settings (role, pairing, categories). <b>Fresh install</b> erases everything: use it the first time,
@@ -253,9 +258,13 @@
     <p>Flashing it replaces Bruce. Tire-sensor and fob IDs are next.</p>
 
     <h2 id="log">Log and SD card</h2>
-    <p>The master logs every surveillance device it finds, following and lingering alerts, floods and Bluetooth spam, with time and place when a GPS node has a fix,
-      plus a track point every minute while moving. Until a GPS clock arrives, the time comes from the computer or phone the console runs on.</p>
+    <p>The master logs every device that raises an alert or notice (when first seen, and again once on each later day it's around), following and lingering alerts,
+      floods, spam, jamming and spoofing, with time and place when a GPS node has a fix, plus a track point every minute while moving. Phones, earbuds and other
+      ordinary devices aren't logged: the CYD doesn't have the memory to log every device safely (that's planned for a Marauder V8 master). Until a GPS clock arrives, the time comes from the computer or phone the console runs on.</p>
     <ul>
+      <li><b>HISTORY</b> (the button at the top of the console): the log day by day. Pick the last 24 or 48 hours or days on a calendar, press DOWNLOAD (it asks first:
+        the CYD pauses Classic Bluetooth while it sends), then search, filter, open a device to see every day it was around, or export CSV. Pulled days stay in the
+        browser, so each comes over once and history still opens with nothing connected.</li>
       <li><b>Master flash:</b> the newest several thousand entries, kept through power cuts. Download: SETTINGS &gt; DETECTION LOG &gt; DOWNLOAD LOG (CSV).</li>
       <li><b>SD card:</b> every CYD in the cluster writes the same entries to <code>/SkySentinel/YYYY-MM-DD.csv</code> on a FAT32 card.</li>
       <li><b>Get SD files without touching the node:</b> on the master's console, CLUSTER &gt; EDIT &gt; SD CARD &gt; SHOW FILES &gt; DOWNLOAD.

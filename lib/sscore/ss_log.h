@@ -13,7 +13,7 @@ namespace ss {
 enum LogKind : uint8_t {
   LK_NONE = 0,
   LK_START = 1,      // the master started logging (power on)
-  LK_DEVICE = 2,     // a surveillance device first seen, or it became a confident match
+  LK_DEVICE = 2,     // a device raising an alert or notice: first seen, upgraded, or first time today (a = 0 / 1 / 2)
   LK_FOLLOWING = 3,
   LK_LINGERING = 4,
   LK_DEAUTH = 5,
@@ -25,6 +25,8 @@ enum LogKind : uint8_t {
   LK_RF_JAM = 11,    // a sub-GHz band jammed (T-Embed CC1101)
   LK_GPS_JAM = 12,   // GPS signals drowned (Heltec): a = dB lost, b = satellites before << 8 | now
   LK_GPS_SPOOF = 13, // GPS saying something it can't: a = detail, b = GpsSpoofWhy
+  LK_CSA_SPOOF = 14, // forged "switch channel" beacons (mac = the network): a = fake beacons, b = to channel
+  LK_SAE_FLOOD = 15, // WPA3 handshake flood (mac = the access point): a = channel, b = frames per second
 };
 const char* logKindName(uint8_t k);  // "start", "device", "following", ...
 
@@ -56,5 +58,22 @@ bool decodeLogRec(const uint8_t* p, size_t n, LogRec& m);
 extern const char kLogCsvHeader[];
 // One CSV line, '\n' included. Returns its length (0 if it didn't fit).
 size_t formatLogCsv(const LogRec& r, char* out, size_t cap);
+
+// Which devices already have a record today, so one that stays around (or comes back
+// every day) is logged once per UTC day: enough to say "seen on 9 of the last 10 days"
+// without a record per sighting. Fixed size; when full, the entry from the oldest day
+// (then the oldest added) goes.
+class DailySeen {
+ public:
+  static constexpr uint16_t kSlots = 256;
+  // True the first time `id` is offered on `day` (UTC days since 1970), and records it.
+  bool firstToday(uint32_t id, uint16_t day);
+  void clear();
+
+ private:
+  struct Slot { uint32_t id; uint16_t day; uint16_t order; };
+  Slot slots_[kSlots] = {};
+  uint16_t used_ = 0, order_ = 0;
+};
 
 }  // namespace ss

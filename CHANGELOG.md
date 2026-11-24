@@ -1,6 +1,44 @@
 # Changelog
 
-## 2.1.6 (2026-11-20)
+## 2.1.7 (2026-11-24)
+
+Flash every board: the master for HISTORY's logging and the track fix, the T-Embed for
+tire sensors, and every Wi-Fi / Bluetooth node for the new names and attack alarms. A
+2.1.6 board still works in the cluster.
+
+- **HISTORY page** (full width, in place of the live view): the detection log day by day from a CYD's SD card (through the master)
+  or the master's own log. LAST 24 H / LAST 48 H / a calendar; DOWNLOAD asks first (the CYD
+  pauses Classic Bluetooth while it sends) and only fetches what this browser doesn't have
+  yet; totals, records per hour, search and filters, a per-device "seen on N days" view,
+  CSV export, and it works offline with what was pulled before.
+- **The detection log keeps every alert and notice once per device per day** (`seen
+  today`), so history shows each day a device was around, and notices below 50 are
+  logged too. Constraint, documented: the CYD logs alerts and notices only; logging
+  every device waits for a Marauder V8 master.
+- **Fix: track points.** The log added a "track" row whenever the position moved about 5 m
+  (meant to be 50 m), so a parked GPS's wander logged one a minute. Now 50 m, measured
+  properly.
+- **Tire pressure sensors (T-Embed CC1101).** Between band sweeps the CC1101 listens on
+  315 MHz (or 433.92, SETTINGS > Tire sensors) and decodes Toyota / Lexus, Ford,
+  Hyundai / Kia (VDO), Jeep / Chrysler, Hyundai / Honda (TRW), Kia, Honda, GM (Schrader)
+  and other Schrader sensors. Each tire is a Vehicles device with its fixed ID and
+  pressure, so a car that goes where you go raises a following alert. Mark your own
+  car's four tires THIS IS MINE. Not yet tried on hardware.
+- **New attack alarms:** forged channel-switch beacons (`csa_spoof`) and WPA3 handshake
+  floods (`sae_flood`), with banners, log records and CYD / T-Embed alerts.
+- **More pentest gear by name:** Evil-M5Project, Bruce and GhostESP's stock device and
+  network names, Marauder's evil portal default (weak), and Chameleon Ultra / Lite RFID
+  cloners.
+- **From Evil-M5Project** (identifiers only): `HC-03` skimmer modules and the modules'
+  stock address blocks as a confidence boost; AirPods 4 / 4 ANC / Pro 2 USB-C / Pro 3 /
+  Max USB-C; iPhone Instant Hotspot with battery and bars; AirPlay targets with their
+  address.
+- **Screenshots** on the website's home page and in the README, and a README reworked
+  into a short front page with the reference material in `docs/`.
+- **Phones:** the website's "wrong browser for USB" bar now shows only on the install page
+  (and in the console), not on every page; the console's status pills wrap on a phone
+  instead of running off the screen.
+## 2.1.6 (2026-11-21)
 
 Flash every board, master included: categories are 32 bits now, and the master is what
 carries the new ones to the nodes. A 2.1.5 board still works in the cluster; it just

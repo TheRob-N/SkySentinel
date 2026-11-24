@@ -175,6 +175,18 @@ DIO1 14, TCXO 1.8 V).
   sensor, a remote: a sample 15 dB over the floor) and **jamming** (the whole band 20 dB
   over its floor for 3 s: `EV_RF_JAM`, alert on the master, `rf_jam` in the log, once a
   minute per band). Runs while the Sub-GHz, Pentest gear or Vehicles category is on.
+- **Tire pressure sensors (TPMS):** after each sweep the CC1101 listens on 315 MHz
+  (433.92 in Europe: SETTINGS > Tire sensors) for about 0.7 s in FSK and 0.5 s in OOK.
+  Its carrier sense (GDO2) starts a capture of the demodulated data (GDO0); each capture
+  is decoded for Toyota / Lexus (Pacific PMV-C210), Ford, Hyundai / Kia (Continental
+  VDO), Jeep / Chrysler (Continental), Hyundai Elantra / Honda Civic (TRW), Kia, Honda
+  (TRW PPA-GF33), GM (Schrader EG53MA4) and other Schrader sensors. Each tire is a device
+  in **Vehicles** with its fixed ID, maker and pressure ("Toyota tire 1A2B3C4D 34 psi"),
+  so the usual following check catches a car that goes where you go. Sensors send about
+  once a minute while the car moves (a parked car rarely). Your own car's four tires
+  will "follow" you too: press THIS IS MINE on each. The HOME page shows
+  `tires decoded/heard`. Wire formats from the rtl_433 project's captures; this decoder
+  is our own. **Not yet tried on hardware.**
 - **Boot screen:** the logo and what started (radios, CC1101, battery, pairing, build),
   for 3 s or until a button is touched.
 - **Screen and jog wheel:** turn for six pages:
@@ -208,7 +220,7 @@ DIO1 14, TCXO 1.8 V).
   a cluster alert flashes (10 s, 30 s, 1 min, 5 min, or until a button; any button stops it), what counts as a
   burst (louder than 10 / 15 / 20 / 25 / 30 dB over the band's quiet level, default 30, and
   longer than 2.5 / 7.5 / 15 / 20 / 30 ms, default 15; louder and longer = fewer false bursts), which bands to
-  watch, and whether jamming is sent to the master.
+  watch, whether jamming is sent to the master, and tire sensors (315 MHz / 433.92 / Off).
 - **On the web console:** every burst goes to the master as a row in LIVE DEVICES, one
   row per band ("Sub-GHz bursts: Ford fobs, tire sensors", ADDRESS 315 MHz): HITS counts
   the bursts, SIGNAL is the latest one's, NODE says which T-Embed heard it. They're in
@@ -221,8 +233,7 @@ DIO1 14, TCXO 1.8 V).
   (blue), and while it looks for its master it blinks slowly (yellow). Picking a color in
   SETTINGS shows it on the ring for a moment.
 - **Battery** from its BQ27220 fuel gauge.
-- Next: tire-pressure sensor IDs (following alerts on a car), fob and remote IDs, replay
-  and brute-force patterns. Pins: SPI 11 / 9 / 10 shared by screen (CS 41, DC 16, RST 40,
+- Next: fob and remote IDs, replay and brute-force patterns. Pins: SPI 11 / 9 / 10 shared by screen (CS 41, DC 16, RST 40,
   BL 21), CC1101 (CS 12, GDO0 3, GDO2 38, antenna switch 47 / 48) and SD (CS 13); power
   enable 15; jog wheel 4 / 5, press 0, back 6; I2C 8 / 18.
 

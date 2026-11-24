@@ -27,7 +27,7 @@ CATEGORIES = ["none", "flock", "bodycam", "tracker", "glasses", "drone", "skimme
               "camera", "smarthome"]
 KINDS = {0x01: "wifi_beacon", 0x02: "wifi_probe_req", 0x03: "wifi_probe_resp", 0x04: "wifi_data",
          0x05: "wifi_other", 0x10: "ble_adv", 0x20: "bt_classic", 0x30: "lora_meshtastic", 0x31: "lorawan", 0x32: "lora_meshcore",
-         0x40: "subghz", 0x50: "zigbee", 0x51: "thread", 0x52: "ieee802154"}
+         0x40: "subghz", 0x41: "tpms", 0x50: "zigbee", 0x51: "thread", 0x52: "ieee802154"}
 CHANNELS = list(range(1, 14)) + [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124,
                                  128, 132, 136, 140, 144, 149, 153, 157, 161, 165]
 

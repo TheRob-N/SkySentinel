@@ -14,7 +14,7 @@ const char kLogCsvHeader[] = "time_utc,uptime_s,lat,lon,kind,category,signature,
 const char* logKindName(uint8_t k) {
   static const char* const n[] = {"", "start", "device", "following", "lingering", "deauth_flood",
                                   "disassoc_flood", "ble_spam", "track", "wifi_spam", "evil_twin", "rf_jam",
-                                  "gps_jam", "gps_spoof"};
+                                  "gps_jam", "gps_spoof", "csa_spoof", "sae_flood"};
   return k < sizeof(n) / sizeof(n[0]) ? n[k] : "";
 }
 
@@ -73,7 +73,7 @@ size_t formatLogCsv(const LogRec& r, char* out, size_t cap) {
     name[o] = '\0';
   }
   switch (r.kind) {
-    case LK_DEVICE: snprintf(detail, sizeof(detail), "%s", r.a ? "upgraded" : "new"); break;
+    case LK_DEVICE: snprintf(detail, sizeof(detail), "%s", r.a == 2 ? "seen today" : r.a ? "upgraded" : "new"); break;
     case LK_FOLLOWING:
     case LK_LINGERING: snprintf(detail, sizeof(detail), "places=%u minutes=%u", r.a, r.b); break;
     case LK_DEAUTH:
@@ -86,6 +86,8 @@ size_t formatLogCsv(const LogRec& r, char* out, size_t cap) {
       snprintf(detail, sizeof(detail), "db_lost=%u sats=%u->%u", r.a, r.b >> 8, r.b & 0xFF);
       break;
     case LK_GPS_SPOOF: snprintf(detail, sizeof(detail), "why=%s value=%u", gpsSpoofWhyName((uint8_t)r.b), r.a); break;
+    case LK_CSA_SPOOF: snprintf(detail, sizeof(detail), "fake_beacons=%u to_channel=%u", r.a, r.b); break;
+    case LK_SAE_FLOOD: snprintf(detail, sizeof(detail), "channel=%u frames=%u", r.a, r.b); break;
     case LK_START: snprintf(detail, sizeof(detail), "boot=%u", r.a); break;
     default: break;
   }
@@ -101,5 +103,32 @@ size_t formatLogCsv(const LogRec& r, char* out, size_t cap) {
   if (n <= 0 || (size_t)n >= cap) return 0;
   return (size_t)n;
 }
+
+bool DailySeen::firstToday(uint32_t id, uint16_t day) {
+  for (uint16_t i = 0; i < used_; ++i) {
+    Slot& s = slots_[i];
+    if (s.id != id) continue;
+    if (s.day == day) return false;
+    s.day = day;
+    s.order = ++order_;
+    return true;
+  }
+  Slot* t;
+  if (used_ < kSlots) {
+    t = &slots_[used_++];
+  } else {
+    t = &slots_[0];   // the oldest day, then the longest ago added (order wraps: compare by age)
+    for (uint16_t i = 1; i < kSlots; ++i) {
+      const Slot& s = slots_[i];
+      if (s.day < t->day || (s.day == t->day && (uint16_t)(order_ - s.order) > (uint16_t)(order_ - t->order))) t = &slots_[i];
+    }
+  }
+  t->id = id;
+  t->day = day;
+  t->order = ++order_;
+  return true;
+}
+
+void DailySeen::clear() { used_ = 0; order_ = 0; }
 
 }  // namespace ss

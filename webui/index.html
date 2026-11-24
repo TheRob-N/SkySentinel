@@ -35,6 +35,7 @@
   .brand.logo { font-family: "Segoe UI", "Helvetica Neue", Arial, system-ui, sans-serif; font-weight: 800; font-style: italic;
                 letter-spacing: .5px; color: var(--logo-b); white-space: nowrap; }
   .brand.logo .logo-sky { color: var(--logo-a); }
+  a.brand.logo { text-decoration: none; cursor: pointer; }
   .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid var(--line);
           border-radius: 3px; font-size: 13px; white-space: nowrap; }
@@ -52,6 +53,7 @@
   .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
 
   main { display: flex; flex-wrap: wrap; gap: 18px; padding: 18px 20px; align-items: flex-start; }
+  main[hidden] { display: none; }
   .left { flex: 1 1 320px; max-width: 420px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
   .right { flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; }
@@ -147,6 +149,43 @@
   #devRows tr { cursor: pointer; }
   #devRows tr:hover td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
   dialog.wide { width: min(860px, 96vw); }
+  #histPage { display: flex; flex-direction: column; gap: 14px; padding: 18px 20px; }
+  #histPage[hidden] { display: none; }
+  .hpage { width: 100%; }
+  .hlayout { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+  .hlayout[hidden] { display: none; }
+  .hside { flex: 0 0 340px; max-width: 100%; }
+  .hmain { flex: 1 1 420px; min-width: 0; }
+  .hmain .hstats { margin-top: 0; }
+  #histBtn[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .hcal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; width: min(330px, 100%); margin-top: 8px; }
+  .hcal .dow { font-size: 11px; color: var(--muted); text-align: center; letter-spacing: 1px; }
+  .hcal button { position: relative; padding: 6px 0; border: 1px solid var(--line); background: transparent; color: var(--muted); border-radius: 3px; font-size: 13px; }
+  .hcal button.has { color: var(--text); border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+  .hcal button.got::after { content: ""; position: absolute; right: 3px; top: 3px; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+  .hcal button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .hcal button[aria-pressed="true"].got::after { background: var(--accent-ink); }
+  .hcal button:disabled { opacity: .3; cursor: default; }
+  .hcalnav { display: flex; align-items: center; justify-content: space-between; width: min(330px, 100%); margin-top: 10px; font-size: 13px; letter-spacing: 1px; }
+  .hstats { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 10px 0 6px; font-size: 13px; }
+  .hstats b { font-size: 18px; margin-right: 4px; }
+  .hstats .crit b { color: var(--crit); }
+  .hbars { display: flex; align-items: flex-end; gap: 1px; height: 54px; border-bottom: 1px solid var(--line); }
+  .hbars span { flex: 1; min-width: 1px; background: color-mix(in srgb, var(--accent) 70%, transparent); }
+  .hbars span.crit { background: var(--crit); }
+  .hbars span.none { background: transparent; }
+  .haxis { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 3px; }
+  .hwrap { max-height: 70vh; overflow: auto; }
+  .hwrap table { font-size: 13px; }
+  #histDevRows tr { cursor: pointer; }
+  #histDevHead th { cursor: pointer; user-select: none; }
+  #histDevHead th.sorted::after { content: " \25BE"; }
+  #histDevHead th.sorted.asc::after { content: " \25B4"; }
+  #histRows td.mac button, #histEvRows td.mac button { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline dotted; }
+  #histRows tr.hcrit td:nth-child(2), #histEvRows tr.hcrit td:nth-child(2) { color: var(--crit); font-weight: 700; }
+  #histRows tr.hwarn td:nth-child(2) { color: var(--warn); font-weight: 700; }
+  #histDev { margin: 8px 0; padding: 10px 12px; border: 1px solid var(--accent); border-radius: 4px; font-size: 13px; }
+  @media (max-width: 560px) { .hcal button { padding: 8px 0; } }
   .gpsgrid { display: grid; grid-template-columns: minmax(220px, 300px) 1fr; gap: 18px; align-items: start; }
   @media (max-width: 640px) { .gpsgrid { grid-template-columns: 1fr; } }
   .sky { width: 100%; max-width: 300px; display: block; margin: 0 auto; }
@@ -236,13 +275,14 @@
   .only-node { display: none; }
   body.is-node .only-node { display: block; }
   body.is-node .not-node { display: none; }
-  @media (max-width: 560px) { header { padding: 10px 12px; } main { padding: 12px; } .toggles, .roles { grid-template-columns: 1fr; } }
+  @media (max-width: 560px) { header { padding: 10px 12px; } main { padding: 12px; } .toggles, .roles { grid-template-columns: 1fr; }
+    header .pill { white-space: normal; max-width: 100%; } }   /* phones: the status pills wrap instead of running off the screen */
 </style>
 </head>
 <body>
 <header>
   <div class="row">
-    <div class="brand logo"><span class="logo-sky">SKY</span> SENTINEL</div>
+    <a class="brand logo" id="homeLink" href="#" title="Live view"><span class="logo-sky">SKY</span> SENTINEL</a>
     <span class="pill mono" id="linkPill" title="How this page reaches the board: USB cable or the board's own Wi-Fi. A dim dot means not connected."><span class="dot" id="linkDot"></span><span id="linkText">not connected</span></span>
     <span class="pill mono" id="rolePill" hidden title="This board's job: STANDALONE (does everything itself), MASTER (runs a cluster of nodes) or NODE (a sensor for a master). Change it in SETTINGS."></span>
     <span class="pill mono" id="planPill" hidden></span>
@@ -251,6 +291,7 @@
     <button class="btn primary" id="connectBtn">CONNECT USB</button>
     <button class="btn" id="settingsBtn" disabled>CATEGORIES</button>
     <button class="btn" id="deviceBtn" disabled>SETTINGS</button>
+    <button class="btn" id="histBtn" title="The detection log, day by day">HISTORY</button>
     <button class="btn" id="helpBtn" title="How SkySentinel works">HELP</button>
     <!--FLASHER:START--><button class="btn" id="fwBtn" title="Install or update SkySentinel on a board over USB">FIRMWARE</button><!--FLASHER:END-->
     <div class="seg" role="group" aria-label="Theme">
@@ -260,7 +301,7 @@
   </div>
 </header>
 
-<main>
+<main id="livePage">
   <section class="left">
     <div class="panel pad not-node">
       <svg id="radar" viewBox="0 0 140 140" role="img" aria-label="Radar: rings show signal strength, dots are devices heard in the last 30 seconds">
@@ -322,7 +363,7 @@
           <span class="seg small" id="winSeg" title="How far back the list goes"><button data-w="60">1 MIN</button><button data-w="300">5 MIN</button><button data-w="900">15 MIN</button><button data-w="3600">1 HR</button></span>
           <select id="radioFilter" class="small" aria-label="Show one radio" title="Show one kind of radio">
             <option value="">ALL RADIOS</option><option value="w">Wi-Fi</option><option value="b">Bluetooth LE</option>
-            <option value="c">Classic BT</option><option value="l">LoRa</option><option value="s">Sub-GHz</option>
+            <option value="c">Classic BT</option><option value="l">LoRa</option><option value="s">Sub-GHz</option><option value="t">Tire sensors</option>
             <option value="z">Zigbee / Thread</option>
           </select>
           <input type="search" id="filter" placeholder="filter (mac, name, type)" aria-label="Filter devices">
@@ -352,6 +393,86 @@
       <h2 style="position:relative">CONSOLE <span class="row"><button class="btn small" id="cmdHelpBtn" title="What can I type here?" aria-expanded="false">?</button><input type="search" id="cmd" placeholder="command, e.g. devices" aria-label="Send a command to the board"><button class="btn" id="sendBtn">SEND</button><label class="chk"><input type="checkbox" id="rawToggle"> show raw</label></span></h2>
       <div id="console" class="mono" hidden></div>
     </div>
+  </section>
+</main>
+<main id="histPage" hidden>
+  <section class="panel hpage">
+    <h2 id="histHead" class="clickable" title="Click to show or hide the days and totals">
+      <span><span id="histArrow">\u25b4</span> HISTORY <span class="hint" id="histSrcInfo" style="letter-spacing:0"></span></span>
+      <span class="row">
+        <select id="histSrc" class="small" aria-label="Where the history comes from" style="background:var(--bg); border:1px solid var(--line); border-radius:3px; padding:4px 8px"></select>
+        <button class="btn small" id="histList">REFRESH</button>
+        <button class="btn small primary" id="histClose" title="Back to the live view">LIVE VIEW</button>
+      </span>
+    </h2>
+    <div class="pad hlayout" id="histBody">
+      <div class="hside">
+        <div class="seg" role="group" aria-label="Which days">
+          <button id="histR24" aria-pressed="true">LAST 24 H</button>
+          <button id="histR48" aria-pressed="false">LAST 48 H</button>
+          <button id="histRCal" aria-pressed="false">PICK DAYS</button>
+        </div>
+        <div id="histCalBox" hidden>
+          <div class="hcalnav"><button class="btn small" id="histPrev" aria-label="Previous month">&lsaquo;</button><span id="histMonth" class="mono"></span><button class="btn small" id="histNext" aria-label="Next month">&rsaquo;</button></div>
+          <div class="hcal" id="histCal"></div>
+          <p class="hint" style="max-width:330px">Outlined: on the card · dot: downloaded
+            <button class="btn small" id="histUndated" aria-pressed="false" hidden title="Records from before the GPS gave the date">UNDATED</button></p>
+        </div>
+        <div id="histNeed" class="hint" style="margin-top:12px"></div>
+        <div class="row" style="gap:8px; margin-top:8px">
+          <button class="btn primary" id="histPull">DOWNLOAD</button>
+          <button class="btn" id="histCancel" hidden>CANCEL</button>
+        </div>
+        <div class="bar" id="histProg" hidden><span style="width:0%"></span><span style="flex:1"></span></div>
+        <div class="hint" id="histProgText"></div>
+      </div>
+      <div class="hmain">
+        <div class="hstats" id="histStats"></div>
+        <div class="hbars" id="histBars"></div>
+        <div class="haxis mono" id="histAxis"></div>
+        <div id="histDev" hidden></div>
+      </div>
+    </div>
+  </section>
+  <section class="panel hpage">
+    <h2>
+      <span class="row" style="gap:10px">
+        <span class="seg small" id="histMode" role="group" aria-label="Show devices or records"><button data-v="dev" aria-pressed="true">DEVICES</button><button data-v="rec" aria-pressed="false">RECORDS</button></span>
+        <span id="histCount" style="letter-spacing:1px"></span>
+      </span>
+      <span class="row">
+        <select id="histKind" class="small" aria-label="Kind of record" style="background:var(--bg); border:1px solid var(--line); border-radius:3px; padding:4px 8px">
+          <option value="">All but track</option><option value="all">Everything</option><option value="device">Devices</option><option value="follow">Following / lingering</option>
+          <option value="attack">Attacks and jamming</option><option value="track">Track</option><option value="start">Restarts</option>
+        </select>
+        <select id="histCat" class="small" aria-label="Category" style="background:var(--bg); border:1px solid var(--line); border-radius:3px; padding:4px 8px"></select>
+        <input type="search" id="histQ" placeholder="search name, MAC, signature" aria-label="Search the history">
+        <button class="btn small" id="histCsv">EXPORT CSV</button>
+        <button class="btn small" id="histForget" title="Remove from this browser (the card keeps them)">FORGET DOWNLOADS</button>
+      </span>
+    </h2>
+    <div id="histDevWrap">
+      <div class="tablewrap hwrap"><table><thead id="histDevHead"><tr>
+        <th data-k="sev" title="Category. Red and amber rows alerted. Click any header to sort.">TYPE</th>
+        <th data-k="sig" title="What it was matched as, plus its name in quotes when it sent one">DEVICE</th>
+        <th data-k="mac">MAC</th>
+        <th data-k="peak" title="Strongest signal in the range">PEAK</th>
+        <th data-k="conf" title="Best match confidence">CONF</th>
+        <th data-k="first" title="First time in the range">FIRST SEEN</th>
+        <th data-k="last" title="Last time in the range">LAST SEEN</th>
+        <th data-k="days" title="Days it was seen, in everything downloaded">DAYS</th>
+        <th data-k="n" title="Log records for it in the range">RECORDS</th>
+        <th data-k="place" title="Where it was last logged">PLACE</th>
+      </tr></thead><tbody id="histDevRows"></tbody></table></div>
+      <h2 style="border-top:1px solid var(--line)"><span>EVENTS · <span id="histEvCount">0</span></span></h2>
+      <div class="tablewrap" style="max-height:320px"><table><thead><tr><th>TIME</th><th>EVENT</th><th>MAC</th><th>PLACE</th><th>DETAIL</th></tr></thead>
+        <tbody id="histEvRows"></tbody></table></div>
+    </div>
+    <div id="histRecWrap" hidden>
+      <div class="tablewrap hwrap"><table><thead><tr><th>TIME</th><th>KIND</th><th>CATEGORY</th><th>WHAT</th><th>MAC</th><th>RSSI</th><th>PLACE</th><th>DETAIL</th></tr></thead>
+        <tbody id="histRows"></tbody></table></div>
+    </div>
+    <div class="hint pad" id="histMore" hidden></div>
   </section>
 </main>
 
@@ -783,6 +904,21 @@
   </div>
 </dialog>
 
+<dialog id="histAsk" aria-labelledby="histAskTitle">
+  <div class="panel" style="border:0">
+    <h2 id="histAskTitle">DOWNLOAD?</h2>
+    <div class="pad">
+      <p id="histAskWhat" style="margin-top:0; font-size:16px"></p>
+      <p class="hint" id="histAskNote"></p>
+      <div class="row" style="justify-content:flex-end; gap:8px; margin-top:14px">
+        <button class="btn" id="histAskNo">NOT NOW</button>
+        <button class="btn primary" id="histAskYes">DOWNLOAD</button>
+      </div>
+    </div>
+  </div>
+</dialog>
+
+
 <dialog id="gpsDialog" aria-labelledby="gpsTitle" class="wide">
   <div class="panel" style="border:0">
     <h2 id="gpsTitle">GPS</h2>
@@ -1053,6 +1189,7 @@ function bindNodeEdit() {
   };
   $("neClose").onclick = () => $("nodeEdit").close();
   bindPairing();
+  bindHistory();
 }
 
 // ---------------------------------------------------------------------------
@@ -1674,6 +1811,7 @@ function deployText(s) {
 // LoRa devices aren't MAC addresses: show them the way their own tools do.
 function addrText(d) {
   if (d.k === "s") return subGhzMhz(d) + " MHz";   // a band, not a device address
+  if (d.k === "t") return "ID " + d.m.split(":").slice(2).join("");   // 02 + maker + the sensor's 32-bit ID
   if (d.k !== "l") return d.m;
   const b = d.m.split(":");
   if (d.s.startsWith("Meshtastic")) return "!" + b.slice(2).join("").toLowerCase();
@@ -1709,6 +1847,7 @@ function radioText(d) {
   if (d.k === "l") return "LoRa 915" + (loraHops(d) ? " \u00b7 " + loraHops(d) : "");
   if (d.k === "s") return "Sub-GHz";
   if (d.k === "z") return "802.15.4" + (d.ch ? " ch " + d.ch : "");
+  if (d.k === "t") return "Tire sensor";
   return "BLE";
 }
 const CAT_INDEX = Object.fromEntries(CATS.map((c, i) => c && [c.k, i]).filter(Boolean));
@@ -1938,9 +2077,729 @@ function finishRemote(ok, why) {
   rdlButtons();
 }
 
+// ---------------------------------------------------------------------------
+// HISTORY: the detection log day by day, from a CYD's SD card (pulled through the master)
+// or the master's own flash log. What's pulled is kept in this browser (IndexedDB), so a
+// day comes over the radio once; today's file grows, so only its new end is fetched.
+const HIST_KBPS = 12;   // what the cluster link manages, KB a second
+const HIST_SHOW = 1500; // table rows drawn at once
+const HIST_ATTACKS = new Set(["deauth_flood", "disassoc_flood", "ble_spam", "wifi_spam", "evil_twin", "rf_jam", "gps_jam", "gps_spoof", "csa_spoof", "sae_flood"]);
+const HIST_KIND_TEXT = { device: "Device", following: "FOLLOWING", lingering: "LINGERING", deauth_flood: "Deauth flood", disassoc_flood: "Disassoc flood",
+  ble_spam: "Bluetooth spam", wifi_spam: "Wi-Fi spam", evil_twin: "Evil twin", rf_jam: "Sub-GHz jamming", gps_jam: "GPS jamming", gps_spoof: "GPS spoofing",
+  csa_spoof: "Fake channel switch", sae_flood: "WPA3 flood", track: "Track", start: "Restart" };
+const hist = { open: (() => { try { return localStorage.getItem("ss-hist-open") !== "closed"; } catch (_) { return true; } })(),
+  mode: (() => { try { return localStorage.getItem("ss-hist-mode") || "dev"; } catch (_) { return "dev"; } })(),
+  sort: { k: "sev", dir: 1 }, choice: (() => { try { return localStorage.getItem("ss-hist-src") || "auto"; } catch (_) { return "auto"; } })(), src: "", files: null, listing: false, range: "24", picked: new Set(), undated: false, month: null,
+  cache: new Map(), rows: [], view: [], dl: null, dump: null, busy: false, dev: null };
+
+// IndexedDB, with an in-memory stand-in when the browser won't give us one (private windows).
+const histMem = new Map();
+let histDbP = null;
+function histDb() {
+  if (!histDbP) histDbP = new Promise((res) => {
+    try {
+      const r = indexedDB.open("skysentinel-history", 1);
+      r.onupgradeneeded = () => r.result.createObjectStore("files", { keyPath: "key" });
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => res(null);
+    } catch (_) { res(null); }
+  });
+  return histDbP;
+}
+async function histStore(mode, fn) {
+  const db = await histDb();
+  if (!db) return fn(null);
+  return new Promise((res) => {
+    try {
+      const tx = db.transaction("files", mode);
+      const out = fn(tx.objectStore("files"));
+      tx.oncomplete = () => res(out && "result" in out ? out.result : out);
+      tx.onerror = tx.onabort = () => res(undefined);
+    } catch (_) { res(fn(null)); }
+  });
+}
+const histGetAll = () => histStore("readonly", (s) => s ? s.getAll() : [...histMem.values()]);
+const histPut = (rec) => histStore("readwrite", (s) => s ? s.put(rec) : histMem.set(rec.key, rec));
+const histDel = (key) => histStore("readwrite", (s) => s ? s.delete(key) : histMem.delete(key));
+async function histLoad() {
+  const all = (await histGetAll()) || [];
+  hist.cache = new Map(all.map((r) => [r.key, r]));
+}
+
+// Sources: CYDs (or any node) with an SD card, the master's own log, and whatever this browser kept.
+function histSources() {
+  const out = [];
+  const nodes = state.status?.role !== "node" ? state.status?.nodes || [] : [];
+  for (const n of nodes) if (n.sd && n.sd !== "none") out.push({ id: n.id, label: `${n.label || "Node"} (${n.id}) SD card`, live: !!n.online, sd: n.sd });
+  if (state.status && state.status.role !== "node") out.push({ id: "master", label: "Master's own log (recent)", live: true });
+  const known = new Set(out.map((x) => x.id));
+  for (const r of hist.cache.values()) if (!known.has(r.src)) { known.add(r.src); out.push({ id: r.src, label: `${r.src === "master" ? "Master's log" : r.src + " SD card"} (pulled earlier)`, live: false }); }
+  return out;
+}
+// Automatic: a CYD's card when one is logging (it has every day), else the master's log.
+function histAutoSource(list) {
+  return list.find((x) => x.sd === "logging" && x.live) || list.find((x) => x.sd === "logging") ||
+    list.find((x) => x.id === "master" && x.live) || list[0];
+}
+function histFillSources() {
+  const list = histSources();
+  if (hist.choice !== "auto" && !list.some((x) => x.id === hist.choice)) hist.choice = "auto";
+  const pick = hist.choice === "auto" ? histAutoSource(list) : list.find((x) => x.id === hist.choice);
+  const next = pick ? pick.id : "";
+  if (next !== hist.src) { hist.src = next; hist.files = null; hist.listing = false; hist.dev = null; hist.note = ""; hist.changed = true; }
+  const short = (x) => x.label.replace(/ \(recent\)$/, "");
+  $("histSrc").innerHTML = list.length
+    ? `<option value="auto"${hist.choice === "auto" ? " selected" : ""}>Automatic${pick ? " (" + esc(short(pick)) + ")" : ""}</option>` +
+      list.map((x) => `<option value="${esc(x.id)}"${x.id === hist.choice ? " selected" : ""}>${esc(x.label)}</option>`).join("")
+    : `<option value="">Connect to the master, or nothing downloaded yet</option>`;
+  const cur = list.find((x) => x.id === hist.src);
+  $("histList").hidden = !cur || !cur.live || cur.id === "master";
+  return cur;
+}
+
+// The card's files: YYYY-MM-DD.csv (UTC days) and undated.csv.
+function histAskList() {
+  const cur = histSources().find((x) => x.id === hist.src);
+  hist.files = null;
+  if (!cur) return histRender();
+  if (cur.id === "master") { hist.files = [{ n: "log.csv", b: 0 }]; return histRender(); }
+  if (!cur.live || !state.link) { histRender(); return; }
+  hist.listing = true;
+  hist.note = "";
+  $("histSrcInfo").textContent = "reading the card\u2026";
+  state.link.send(`node ${cur.id} sd ls`);
+  // The master answers within ~15 s, even if the node doesn't. A reply lost on the way (a
+  // garbled USB line) would leave this waiting for ever: ask once more, then say so.
+  clearTimeout(hist.listTimer);
+  const tries = (hist.listTries = (hist.listTries || 0) + 1);
+  hist.listTimer = setTimeout(() => {
+    if (!hist.listing) return;
+    hist.listing = false;
+    if (tries < 2) { histAskList(); return; }
+    hist.listTries = 0;
+    hist.files = null;
+    hist.note = "the card didn't answer: press REFRESH";
+    histRender();
+  }, 20000);
+}
+function histOnList(m) {
+  if (!hist.listing || m.node !== hist.src) return;
+  hist.listing = false;
+  hist.listTries = 0;
+  clearTimeout(hist.listTimer);
+  hist.note = m.err && m.mounted ? m.err : m.mounted ? "" : "no card";
+  if (m.err && m.mounted) { hist.files = []; histRender(); return; }
+  hist.files = m.mounted ? (m.files || []).filter((f) => /^(\d{4}-\d\d-\d\d|undated)\.csv$/.test(f.n)) : [];
+  histRender();
+}
+
+// Days and ranges. Card files are UTC days; the calendar and ranges are your local time.
+const histUtcName = (ms) => new Date(ms).toISOString().slice(0, 10) + ".csv";
+const histLocalKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+function histLocalStart(key) { const [y, m, d] = key.split("-").map(Number); return new Date(y, m - 1, d).getTime(); }
+function histSpanNames(a, b) {   // UTC file names covering [a, b)
+  const out = [];
+  for (let t = Date.UTC(new Date(a).getUTCFullYear(), new Date(a).getUTCMonth(), new Date(a).getUTCDate()); t < b; t += 86400000) out.push(histUtcName(t));
+  return out;
+}
+// What the chosen range needs: time windows, and the card files covering them.
+function histWindows() {
+  const now = Date.now();
+  if (hist.range === "24" || hist.range === "48") return [[now - (+hist.range) * 3600000, now + 60000]];
+  return [...hist.picked].sort().map((k) => { const s = histLocalStart(k); return [s, histLocalStart(histLocalKey(new Date(s + 36 * 3600000)))]; });
+}
+function histNeededNames() {
+  if (hist.src === "master") return ["log.csv"];
+  const names = new Set();
+  for (const [a, b] of histWindows()) for (const n of histSpanNames(a, b)) names.add(n);
+  if (hist.range === "cal" && hist.undated) names.add("undated.csv");
+  return [...names];
+}
+const histKey = (src, name) => `${src}/${name}`;
+// Files to fetch: missing here, or grown on the card since (from where we stopped).
+function histPlan() {
+  const plan = [];
+  if (!hist.files) return plan;
+  const onCard = new Map(hist.files.map((f) => [f.n, f.b]));
+  for (const n of histNeededNames()) {
+    if (!onCard.has(n)) continue;
+    const size = onCard.get(n), have = hist.cache.get(histKey(hist.src, n));
+    if (hist.src === "master") { plan.push({ name: n, from: 0, size: 0 }); continue; }
+    if (!have || size < have.size) plan.push({ name: n, from: 0, size });
+    else if (size > have.size) plan.push({ name: n, from: have.size, size });
+  }
+  return plan;
+}
+const histKB = (b) => b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1048576).toFixed(1)} MB`;
+const histDur = (s) => s < 10 ? "a few seconds" : s < 90 ? `~${Math.round(s)} s` : `~${Math.round(s / 60)} min`;
+// A plain yes / no for a download, in our own dialog (the browser's says OK / Cancel and "This page says").
+function histAsk(what, note) {
+  return new Promise((resolve) => {
+    $("histAskWhat").textContent = what;
+    $("histAskNote").textContent = note;
+    const done = (v) => { $("histAsk").close(); resolve(v); };
+    $("histAskYes").onclick = () => done(true);
+    $("histAskNo").onclick = () => done(false);
+    $("histAsk").oncancel = (e) => { e.preventDefault(); done(false); };
+    $("histAsk").showModal();
+  });
+}
+
+// Pulling
+async function histPull() {
+  if (hist.busy) return;
+  const cur = histSources().find((x) => x.id === hist.src);
+  if (!cur || !cur.live || !state.link) { histRender(); return; }
+  if (cur.id === "master") { histPullMaster(); return; }
+  if (!hist.files) { histAskList(); return; }
+  if (rdl.on) { alertBox("Another SD download is running (node settings). Let it finish first."); return; }
+  const plan = histPlan();
+  if (!plan.length) { histRender(); return; }
+  const bytes = plan.reduce((s, p) => s + p.size - p.from, 0), secs = bytes / 1024 / HIST_KBPS;
+  const who = cur.label.replace(/ SD card$/, "");
+  const days = plan.map((p) => p.name === "undated.csv" ? "undated" : new Date(p.name.slice(0, 10) + "T12:00:00Z").toLocaleDateString([], { month: "short", day: "numeric", timeZone: "UTC" }));
+  if (!await histAsk(`${days.join(", ")} \u00b7 ${histKB(bytes)} \u00b7 ${histDur(secs)}`,
+    `${who} pauses Classic Bluetooth while it sends.`)) return;
+  hist.busy = true;
+  hist.cancel = false;
+  histProgress(0, bytes, "");
+  let done = 0, failed = "";
+  for (const p of plan) {
+    if (hist.cancel) break;
+    const got = await histFetch(cur.id, p, (n) => histProgress(done + n, bytes, `${p.name} \u00b7 ${histKB(done + n)} of ${histKB(bytes)}`));
+    if (!got.ok) { failed = `${p.name}: ${got.err}`; break; }
+    const key = histKey(cur.id, p.name), old = hist.cache.get(key);
+    const text = (p.from && old ? old.text : "") + got.text;
+    const rec = { key, src: cur.id, name: p.name, size: p.from + got.bytes, text, fetched: Date.now() };
+    hist.cache.set(key, rec);
+    await histPut(rec);
+    done += p.size - p.from;
+  }
+  hist.busy = false;
+  hist.dl = null;
+  const msg = hist.cancel ? "Stopped." : failed ? `Stopped: ${failed}. Try again to continue.` : "";
+  histProgress(-1, 0, msg);
+  if (!hist.cancel && !failed) addEvent(0, `History: pulled ${histKB(bytes)} from ${who}`);
+  histAskList();
+}
+function histProgress(n, total, text) {
+  $("histProg").hidden = n < 0;
+  $("histCancel").hidden = n < 0;
+  $("histPull").disabled = n >= 0;
+  if (n >= 0) {
+    const pct = total ? Math.min(100, Math.floor((n / total) * 100)) : 0;
+    const [a, b] = $("histProg").children;
+    a.style.width = pct + "%";
+    b.style.width = 100 - pct + "%";
+  }
+  $("histProgText").textContent = text;
+}
+// One file (or its new end) through the master: {"t":"rfile"} pieces, {"t":"rfile_end"}.
+function histFetch(node, p, onBytes) {
+  return new Promise((resolve) => {
+    const dl = hist.dl = { node, name: p.name, got: p.from, start: p.from, parts: [], resumed: 0, timer: 0, onBytes,
+      finish: (ok, err) => {
+        clearTimeout(dl.timer);
+        if (hist.dl === dl) hist.dl = null;
+        let text = "";
+        try { text = new TextDecoder().decode(histJoin(dl.parts)); } catch (_) {}
+        resolve({ ok, err, text, bytes: dl.got - dl.start });
+      } };
+    histWatch(dl);
+    state.link.send(`node ${node} sd get ${p.name}${p.from ? " " + p.from : ""}`);
+  });
+}
+function histJoin(parts) {
+  const n = parts.reduce((s, u) => s + u.length, 0), out = new Uint8Array(n);
+  let o = 0;
+  for (const u of parts) { out.set(u, o); o += u.length; }
+  return out;
+}
+function histWatch(dl) {
+  clearTimeout(dl.timer);
+  dl.timer = setTimeout(() => dl.finish(false, "nothing arrived for 30 s"), 30000);
+}
+function histOnFile(m) {
+  const dl = hist.dl;
+  if (!dl || m.node !== dl.node || m.name !== dl.name) return;
+  histWatch(dl);
+  if (m.t === "rfile") {
+    if (m.off === dl.got) {
+      const bin = atob(m.b64), u = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; ++i) u[i] = bin.charCodeAt(i);
+      dl.parts.push(u);
+      dl.got += u.length;
+      dl.onBytes(dl.got - dl.start);
+    } else if (m.off > dl.got && Date.now() - dl.resumed > 1500) {
+      dl.resumed = Date.now();   // a piece went missing: carry on from the last good byte
+      state.link?.send(`node ${dl.node} sd get ${dl.name} ${dl.got}`);
+    }
+    return;
+  }
+  if (!m.ok) { dl.finish(false, m.err || "failed"); return; }
+  if (dl.got < m.bytes) {   // bytes = where the master stopped reading: a piece before it went missing
+    if (Date.now() - dl.resumed > 1500) {   // unless a resume is already on its way
+      dl.resumed = Date.now();
+      state.link?.send(`node ${dl.node} sd get ${dl.name} ${dl.got}`);
+    }
+    return;
+  }
+  dl.finish(true);
+}
+// The master's flash log: over Wi-Fi as /log.csv, over USB with "log dump".
+async function histPullMaster() {
+  hist.busy = true;
+  histProgress(0, 1, "reading the master's log\u2026");
+  let text = "", ok = true;
+  if (state.link instanceof WifiLink) {
+    try { const r = await fetch("/log.csv"); if (!r.ok) throw new Error(r.status); text = await r.text(); } catch (e) { ok = false; text = ""; }
+  } else {
+    const lines = await new Promise((resolve) => {
+      hist.dump = { lines: [], done: resolve, timer: setTimeout(() => { hist.dump = null; resolve(null); }, 120000) };
+      state.link.send("log dump");
+    });
+    ok = !!lines;
+    text = lines ? lines.join("\n") + "\n" : "";
+  }
+  hist.busy = false;
+  if (ok) {
+    const rec = { key: histKey("master", "log.csv"), src: "master", name: "log.csv", size: text.length, text, fetched: Date.now() };
+    hist.cache.set(rec.key, rec);
+    await histPut(rec);
+  }
+  histProgress(-1, 0, ok ? "" : "Couldn't read the master's log.");
+  histRender();
+}
+function histOnDump(m) {
+  const d = hist.dump;
+  if (!d) return;
+  if (m.t === "log") { d.lines.push(m.l); return; }
+  if (m.t !== "log_end") return;   // log_begin
+  clearTimeout(d.timer);
+  hist.dump = null;
+  d.done(m.ok ? d.lines : d.lines.length ? d.lines : null);
+}
+
+// Parsing: time_utc,uptime_s,lat,lon,kind,category,signature,mac,name,rssi,conf,strong,detail
+function histSplit(line) {
+  const out = [];
+  let cur = "", q = false;
+  for (let i = 0; i < line.length; ++i) {
+    const c = line[i];
+    if (q) { if (c === '"') { if (line[i + 1] === '"') { cur += '"'; ++i; } else q = false; } else cur += c; }
+    else if (c === '"') q = true;
+    else if (c === ",") { out.push(cur); cur = ""; }
+    else cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+function histParse(rec) {
+  if (rec._rows && rec._rowsFor === rec.size) return rec._rows;
+  const rows = [];
+  for (const line of rec.text.split("\n")) {
+    if (!line || line.startsWith("time_utc")) continue;
+    const f = histSplit(line);
+    if (f.length < 13) continue;
+    const t = /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(f[0]) ? Date.parse(f[0].replace(" ", "T") + "Z") : null;
+    rows.push({ t, up: +f[1] || 0, lat: f[2], lon: f[3], kind: f[4], cat: f[5], sig: f[6], mac: f[7], name: f[8],
+      rssi: f[9], conf: f[10], strong: f[11] === "yes", detail: f[12], line });
+  }
+  rec._rows = rows;
+  rec._rowsFor = rec.size;
+  return rows;
+}
+function histSeverity(r) {
+  if (r.kind === "following" || r.kind === "lingering" || HIST_ATTACKS.has(r.kind)) return 2;
+  if (r.kind === "device") {
+    const c = CATS.find((x) => x && x.k === r.cat);
+    return severity({ c: r.cat, s: r.sig, f: +r.conf || 0, x: r.strong ? 0x10 : 0 }) || (c && c.surv ? 1 : 0);
+  }
+  return 0;
+}
+function histKindMatch(r, k) {
+  if (!k) return r.kind !== "track";
+  if (k === "all") return true;
+  if (k === "follow") return r.kind === "following" || r.kind === "lingering";
+  if (k === "attack") return HIST_ATTACKS.has(r.kind);
+  return r.kind === k;
+}
+
+// Everything kept for this source, and the rows inside the chosen range.
+function histCollect() {
+  const recs = [...hist.cache.values()].filter((r) => r.src === hist.src);
+  const all = [];
+  const seen = new Set();
+  for (const rec of recs) for (const r of histParse(rec)) {
+    const k = r.line;
+    if (seen.has(k)) continue;   // the master's two log files can overlap a card's
+    seen.add(k);
+    all.push(r);
+  }
+  hist.rows = all;
+  const wins = histWindows();
+  const inRange = all.filter((r) => r.t == null ? (hist.range === "cal" && hist.undated) : wins.some(([a, b]) => r.t >= a && r.t < b));
+  inRange.sort((x, y) => (y.t ?? 0) - (x.t ?? 0) || y.up - x.up);
+  return inRange;
+}
+
+function histSetOpen(on) {
+  hist.open = on;
+  try { localStorage.setItem("ss-hist-open", on ? "open" : "closed"); } catch (_) {}
+  $("histBody").hidden = !on;
+  $("histArrow").textContent = on ? "\u25b4" : "\u25be";   // up: click to fold away; down: click to open
+}
+function histRender() {
+  const cur = histFillSources();
+  $("histBody").hidden = !hist.open;
+  $("histArrow").textContent = hist.open ? "\u25b4" : "\u25be";
+  if (hist.changed) { hist.changed = false; if (!$("histPage").hidden) histAskList(); }
+  // Range buttons
+  $("histR24").setAttribute("aria-pressed", hist.range === "24");
+  $("histR48").setAttribute("aria-pressed", hist.range === "48");
+  $("histRCal").setAttribute("aria-pressed", hist.range === "cal");
+  $("histCalBox").hidden = hist.range !== "cal" || hist.src === "master";
+  if (hist.range === "cal") histRenderCal();
+  // Source line
+  const kept = [...hist.cache.values()].filter((r) => r.src === hist.src);
+  if (!hist.listing) {
+    const parts = [];
+    if (hist.files && hist.src !== "master") {
+      const days = hist.files.filter((f) => f.n !== "undated.csv");
+      parts.push(`${days.length} day${days.length === 1 ? "" : "s"} on the card`);
+    }
+    if (kept.length) parts.push(`${kept.length} downloaded`);
+    if (cur && !cur.live) parts.push("offline");
+    if (hist.note) parts.push(hist.note);
+    $("histSrcInfo").textContent = parts.join(" \u00b7 ");
+  }
+  // What a pull would fetch
+  const live = cur && cur.live && !!state.link;
+  if (!hist.busy) {
+    let need = "";
+    if (!cur) need = "Connect to the master to download.";
+    else if (!live) need = "Not connected.";
+    else if (cur.id === "master") need = "The master's recent log.";
+    else if (!hist.files) need = hist.listing ? "Reading the card\u2026" : "";
+    else if (hist.range === "cal" && !hist.picked.size && !hist.undated) need = "Pick days.";
+    else {
+      const plan = histPlan(), bytes = plan.reduce((s, p) => s + p.size - p.from, 0);
+      const names = histNeededNames().filter((n) => hist.files.some((f) => f.n === n));
+      need = !names.length ? "Nothing on the card for those days."
+        : !plan.length ? "All downloaded."
+        : `${histKB(bytes)} to download.`;
+    }
+    $("histNeed").textContent = need;
+    $("histPull").disabled = !live || (cur.id !== "master" && (!hist.files || !histPlan().length));
+    $("histPull").textContent = cur && cur.id === "master" ? "DOWNLOAD THE MASTER'S LOG" : "DOWNLOAD";
+  }
+  // Categories present
+  const catSel = $("histCat"), was = catSel.value;
+  const cats = [...new Set(hist.rows.map((r) => r.cat).filter(Boolean))];
+  catSel.innerHTML = `<option value="">All categories</option>` + CATS.filter((c) => c && (cats.includes(c.k) || c.k === was))
+    .map((c) => `<option value="${c.k}"${c.k === was ? " selected" : ""}>${esc(c.label)}</option>`).join("");
+  histRenderRows();
+}
+
+function histRenderCal() {
+  if (!hist.month) { const d = new Date(); hist.month = new Date(d.getFullYear(), d.getMonth(), 1); }
+  const m = hist.month, y = m.getFullYear(), mo = m.getMonth();
+  $("histMonth").textContent = m.toLocaleDateString([], { month: "long", year: "numeric" }).toUpperCase();
+  const onCard = new Map((hist.files || []).map((f) => [f.n, f.b]));
+  const today = histLocalKey(new Date());
+  const cells = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"].map((d) => `<span class="dow">${d}</span>`);
+  const lead = (new Date(y, mo, 1).getDay() + 6) % 7;
+  for (let i = 0; i < lead; ++i) cells.push("<span></span>");
+  const days = new Date(y, mo + 1, 0).getDate();
+  for (let d = 1; d <= days; ++d) {
+    const key = histLocalKey(new Date(y, mo, d)), s = histLocalStart(key);
+    const names = histSpanNames(s, s + 86400000);
+    const has = names.some((n) => onCard.has(n));
+    const got = names.some((n) => hist.cache.has(histKey(hist.src, n))) && names.every((n) => !onCard.has(n) || (hist.cache.get(histKey(hist.src, n))?.size || -1) >= onCard.get(n));
+    const kept = names.some((n) => hist.cache.has(histKey(hist.src, n)));
+    const cls = [has ? "has" : "", got || (kept && !hist.files) ? "got" : ""].join(" ");
+    const usable = has || kept;
+    cells.push(`<button data-day="${key}" class="${cls}" aria-pressed="${hist.picked.has(key)}"${usable ? "" : " disabled"}${key === today ? ' style="font-weight:700"' : ""}>${d}</button>`);
+  }
+  $("histCal").innerHTML = cells.join("");
+  $("histUndated").hidden = !(onCard.has("undated.csv") || hist.cache.has(histKey(hist.src, "undated.csv")));
+  $("histUndated").setAttribute("aria-pressed", hist.undated);
+}
+
+function histRenderRows() {
+  const inRange = histCollect();
+  const q = $("histQ").value.trim().toLowerCase(), c = $("histCat").value;
+  const dev = hist.mode === "dev", k = dev ? "all" : $("histKind").value;
+  $("histKind").hidden = dev;
+  $("histDevWrap").hidden = !dev;
+  $("histRecWrap").hidden = dev;
+  $("histMode").querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.v === hist.mode));
+  const view = inRange.filter((r) => histKindMatch(r, k) && (!c || r.cat === c) &&
+    (!q || `${r.name} ${r.mac} ${r.sig} ${r.detail} ${r.kind}`.toLowerCase().includes(q)));
+  hist.view = view;
+  // Totals
+  const devs = new Set(view.filter((r) => r.mac && (r.kind === "device" || r.kind === "following" || r.kind === "lingering")).map((r) => r.mac));
+  const follow = view.filter((r) => r.kind === "following" || r.kind === "lingering").length;
+  const attacks = view.filter((r) => HIST_ATTACKS.has(r.kind)).length;
+  const restarts = view.filter((r) => r.kind === "start").length;
+  const byCat = {};
+  for (const r of view) if (r.kind === "device" && r.cat) byCat[r.cat] = (byCat[r.cat] || 0) + 1;
+  const catText = Object.entries(byCat).sort((a, b) => b[1] - a[1]).slice(0, 6)
+    .map(([k2, n]) => `${esc((CATS.find((x) => x && x.k === k2) || {}).label || k2)} ${n}`).join(" \u00b7 ");
+  $("histStats").innerHTML = view.length || inRange.length
+    ? `<span><b>${view.length}</b>records</span><span><b>${devs.size}</b>devices</span>` +
+      `<span class="${follow ? "crit" : ""}"><b>${follow}</b>following / lingering</span><span class="${attacks ? "crit" : ""}"><b>${attacks}</b>attacks</span>` +
+      `<span><b>${restarts}</b>restarts</span>${catText ? `<span class="hint">${catText}</span>` : ""}`
+    : `<span class="hint">Nothing here yet.</span>`;
+  histRenderBars(view);
+  // Table
+  const catLabel = (k2) => (CATS.find((x) => x && x.k === k2) || {}).label || k2 || "";
+  const when = (r) => r.t == null ? `up ${fmtUp(r.up)}` : new Date(r.t).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const place = (r) => r.lat && r.lon ? `<a href="https://www.openstreetmap.org/?mlat=${encodeURIComponent(r.lat)}&mlon=${encodeURIComponent(r.lon)}#map=17/${encodeURIComponent(r.lat)}/${encodeURIComponent(r.lon)}" target="_blank" rel="noopener">${esc((+r.lat).toFixed(4))}, ${esc((+r.lon).toFixed(4))}</a>` : "";
+  if (dev) { histRenderDevices(view, catLabel, when, place); histRenderDev(); return; }
+  $("histCount").textContent = `${view.length} record${view.length === 1 ? "" : "s"}`;
+  $("histRows").innerHTML = view.slice(0, HIST_SHOW).map((r) => {
+    const sev = histSeverity(r);
+    const what = r.kind === "device" || r.kind === "following" || r.kind === "lingering" ? `${esc(r.sig)}${r.name ? ` \u201c${esc(r.name)}\u201d` : ""}` : "";
+    return `<tr class="${sev === 2 ? "hcrit" : sev === 1 ? "hwarn" : ""}"><td class="mono">${esc(when(r))}</td><td>${esc(HIST_KIND_TEXT[r.kind] || r.kind)}</td>` +
+      `<td>${esc(catLabel(r.cat))}</td><td style="white-space:normal; min-width:220px">${what}</td>` +
+      `<td class="mac mono">${r.mac ? `<button data-hmac="${esc(r.mac)}" title="This device across every day pulled">${esc(r.mac)}</button>` : ""}</td>` +
+      `<td class="mono">${esc(r.rssi)}</td><td class="mono">${place(r)}</td><td class="hint">${esc(r.detail)}</td></tr>`;
+  }).join("");
+  $("histMore").textContent = view.length > HIST_SHOW ? `Newest ${HIST_SHOW} of ${view.length}. EXPORT CSV has all of them.` : "";
+  $("histMore").hidden = view.length <= HIST_SHOW;
+  histRenderDev();
+}
+
+function histRenderBars(view) {
+  const wins = histWindows();
+  const timed = view.filter((r) => r.t != null);
+  if (!timed.length || !wins.length) { $("histBars").innerHTML = ""; $("histAxis").innerHTML = ""; return; }
+  const a = Math.min(...wins.map((w) => w[0])), b = Math.min(Date.now(), Math.max(...wins.map((w) => w[1])));
+  const span = b - a, step = span <= 3 * 86400000 ? 3600000 : 86400000;
+  const n = Math.max(1, Math.ceil(span / step)), counts = new Array(n).fill(0), hot = new Array(n).fill(false);
+  for (const r of timed) {
+    const i = Math.floor((r.t - a) / step);
+    if (i < 0 || i >= n) continue;
+    counts[i]++;
+    if (histSeverity(r) === 2) hot[i] = true;
+  }
+  const max = Math.max(1, ...counts);
+  const label = (t) => new Date(t).toLocaleString([], step === 3600000 ? { weekday: "short", hour: "numeric" } : { month: "short", day: "numeric" });
+  $("histBars").innerHTML = counts.map((c, i) => `<span class="${c ? (hot[i] ? "crit" : "") : "none"}" style="height:${c ? Math.max(4, Math.round((c / max) * 100)) : 0}%" title="${esc(label(a + i * step))}: ${c} record${c === 1 ? "" : "s"}"></span>`).join("");
+  $("histAxis").innerHTML = `<span>${esc(label(a))}</span><span>${esc(label(a + Math.floor(n / 2) * step))}</span><span>${esc(label(b))}</span>`;
+}
+
+// DEVICES: the log grouped by device, laid out like LIVE DEVICES; attacks, jamming and
+// restarts (no device behind them) go in EVENTS underneath.
+function histRenderDevices(view, catLabel, when, place) {
+  const dayMap = new Map();   // MAC -> days seen, in everything downloaded
+  for (const r of hist.rows) if (r.mac && r.t != null && (r.kind === "device" || r.kind === "following" || r.kind === "lingering")) {
+    if (!dayMap.has(r.mac)) dayMap.set(r.mac, new Set());
+    dayMap.get(r.mac).add(histLocalKey(new Date(r.t)));
+  }
+  const groups = new Map();
+  const events = [];
+  for (const r of view) {
+    if (r.kind === "track") continue;
+    if (!(r.kind === "device" || r.kind === "following" || r.kind === "lingering") || !r.mac) { events.push(r); continue; }
+    let g = groups.get(r.mac);
+    if (!g) groups.set(r.mac, (g = { mac: r.mac, cat: r.cat, sig: r.sig, names: new Set(), first: null, last: null, peak: null, conf: 0,
+      strong: false, fol: 0, lin: 0, n: 0, sev: 0, placeRow: null, lastRow: null }));
+    g.n++;
+    if (r.name) g.names.add(r.name);
+    if (r.sig && r.kind === "device") g.sig = r.sig;
+    if (r.cat) g.cat = r.cat;
+    if (r.t != null) {
+      if (g.first == null || r.t < g.first) g.first = r.t;
+      if (g.last == null || r.t > g.last) { g.last = r.t; g.lastRow = r; }
+    }
+    if (r.rssi !== "" && (g.peak == null || +r.rssi > g.peak)) g.peak = +r.rssi;
+    g.conf = Math.max(g.conf, +r.conf || 0);
+    g.strong = g.strong || r.strong;
+    if (r.kind === "following") g.fol++;
+    if (r.kind === "lingering") g.lin++;
+    g.sev = Math.max(g.sev, histSeverity(r));
+    if (r.lat && r.lon && (!g.placeRow || (r.t ?? 0) >= (g.placeRow.t ?? 0))) g.placeRow = r;
+  }
+  const rows = [...groups.values()];
+  rows.forEach((g) => { g.days = dayMap.get(g.mac)?.size || 0; g.type = catLabel(g.cat); });
+  const { k, dir } = hist.sort;
+  const val = (g) => k === "sev" ? g.sev * 1000 + g.conf : k === "place" ? (g.placeRow ? 1 : 0) : k === "sig" ? `${g.sig} ${[...g.names].join(" ")}` : g[k];
+  rows.sort((a, b) => {
+    const av = val(a), bv = val(b);
+    if (typeof av === "string" || typeof bv === "string") return dir * String(av ?? "").localeCompare(String(bv ?? ""));
+    return dir * ((bv ?? -1e15) - (av ?? -1e15));
+  });
+  $("histDevHead").querySelectorAll("th").forEach((th) => {
+    th.classList.toggle("sorted", th.dataset.k === k);
+    const text = k === "sig" || k === "mac";
+    th.classList.toggle("asc", th.dataset.k === k && (text ? dir > 0 : dir < 0));
+  });
+  const fmt = (t) => t == null ? "\u2014" : new Date(t).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  $("histCount").textContent = `${rows.length} device${rows.length === 1 ? "" : "s"}`;
+  $("histDevRows").innerHTML = rows.length ? rows.slice(0, HIST_SHOW).map((g) => {
+    const tags = [];
+    if (g.strong) tags.push("STRONG");
+    if (g.fol) tags.push(g.fol > 1 ? `FOLLOWING \u00d7${g.fol}` : "FOLLOWING");
+    if (g.lin) tags.push(g.lin > 1 ? `LINGERING \u00d7${g.lin}` : "LINGERING");
+    const names = [...g.names];
+    return `<tr class="${["", "warn", "crit"][g.sev]}" data-hmac="${esc(g.mac)}">
+      <td><b>${esc(g.type || "\u2014")}</b></td>
+      <td>${esc(g.sig)}${names.length ? ` <span class="dim">${names.map((x) => "\u201c" + esc(x) + "\u201d").join(" ")}</span>` : ""}${tags.map((t) => `<span class="tag">${t}</span>`).join("")}</td>
+      <td class="mono">${esc(g.mac)}</td>
+      <td class="mono">${g.peak ?? "\u2014"}</td>
+      <td class="mono">${g.conf}%</td>
+      <td class="mono">${fmt(g.first)}</td>
+      <td class="mono">${fmt(g.last)}</td>
+      <td class="mono">${g.days}</td>
+      <td class="mono dim">${g.n}</td>
+      <td class="mono dim">${g.placeRow ? place(g.placeRow) : ""}</td>
+    </tr>`;
+  }).join("") : `<tr><td colspan="10" class="dim">No devices in this range.</td></tr>`;
+  $("histEvCount").textContent = events.length;
+  $("histEvRows").innerHTML = events.length ? events.slice(0, 500).map((r) => {
+    const sev = histSeverity(r);
+    return `<tr class="${sev === 2 ? "hcrit" : ""}"><td class="mono">${esc(when(r))}</td><td>${esc(HIST_KIND_TEXT[r.kind] || r.kind)}</td>` +
+      `<td class="mac mono">${r.mac ? esc(r.mac) : ""}</td><td class="mono">${place(r)}</td><td class="hint">${esc(r.detail)}</td></tr>`;
+  }).join("") : `<tr><td colspan="5" class="dim">No attacks, jamming or restarts in this range.</td></tr>`;
+  $("histMore").textContent = rows.length > HIST_SHOW ? `First ${HIST_SHOW} of ${rows.length} devices.` : "";
+  $("histMore").hidden = rows.length <= HIST_SHOW;
+}
+
+// One device across everything pulled from this source.
+function histRenderDev() {
+  const box = $("histDev");
+  if (!hist.dev) { box.hidden = true; return; }
+  const rows = hist.rows.filter((r) => r.mac === hist.dev);
+  if (!rows.length) { box.hidden = true; return; }
+  const days = [...new Set(rows.filter((r) => r.t != null).map((r) => histLocalKey(new Date(r.t))))].sort();
+  const times = rows.filter((r) => r.t != null).map((r) => r.t);
+  const names = [...new Set(rows.map((r) => r.name).filter(Boolean))];
+  const sigs = [...new Set(rows.map((r) => r.sig).filter(Boolean))];
+  const kinds = rows.reduce((o, r) => ((o[r.kind] = (o[r.kind] || 0) + 1), o), {});
+  const fmt = (t) => new Date(t).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  box.innerHTML = `<div class="row" style="justify-content:space-between; gap:8px"><b class="mono">${esc(hist.dev)}</b>` +
+    `<span><button class="btn small" id="histDevOnly">SHOW ONLY THIS</button> <button class="btn small" id="histDevClose">CLOSE</button></span></div>` +
+    `<div>${esc(sigs.join(" / "))}${names.length ? ` \u00b7 named ${names.map((x) => "\u201c" + esc(x) + "\u201d").join(", ")}` : ""}</div>` +
+    `<div><b>Seen on ${days.length} day${days.length === 1 ? "" : "s"}</b>: ${esc(days.map((d) => new Date(histLocalStart(d)).toLocaleDateString([], { month: "short", day: "numeric" })).join(", "))}</div>` +
+    (times.length ? `<div class="hint">First ${esc(fmt(Math.min(...times)))} \u00b7 last ${esc(fmt(Math.max(...times)))} \u00b7 ` +
+      Object.entries(kinds).map(([k, n]) => `${esc(HIST_KIND_TEXT[k] || k)} ${n}`).join(" \u00b7 ") + "</div>" : "");
+  box.hidden = false;
+  $("histDevOnly").onclick = () => { $("histQ").value = hist.dev; histRenderRows(); };
+  $("histDevClose").onclick = () => { hist.dev = null; histRenderDev(); };
+}
+
+function histExport() {
+  if (!hist.view.length) return;
+  const text = "time_utc,uptime_s,lat,lon,kind,category,signature,mac,name,rssi,conf,strong,detail\n" + hist.view.slice().reverse().map((r) => r.line).join("\n") + "\n";
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
+  a.download = `skysentinel-history-${hist.src}-${histLocalKey(new Date())}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+}
+
+// HISTORY is a page of its own: the live view is hidden (and keeps updating) until LIVE VIEW.
+function histShow(on) {
+  $("histPage").hidden = !on;
+  $("livePage").hidden = on;
+  $("histBtn").setAttribute("aria-pressed", on);
+  window.scrollTo(0, 0);
+}
+async function openHistory() {
+  if (!$("histPage").hidden) { histShow(false); return; }
+  await histLoad();
+  histShow(true);
+  histFillSources();
+  hist.changed = false;
+  if (hist.files === null && !hist.listing) histAskList();
+  histRender();
+}
+function bindHistory() {
+  $("histBtn").onclick = openHistory;
+  $("homeLink").onclick = (e) => { e.preventDefault(); histShow(false); };
+  $("histClose").onclick = () => histShow(false);
+  $("histSrc").onchange = () => {
+    hist.choice = $("histSrc").value || "auto";
+    try { localStorage.setItem("ss-hist-src", hist.choice); } catch (_) {}
+    histRender();
+  };
+  $("histList").onclick = () => { hist.listTries = 0; histAskList(); };
+  const setRange = (r) => { hist.range = r; histRender(); };
+  $("histR24").onclick = () => setRange("24");
+  $("histR48").onclick = () => setRange("48");
+  $("histRCal").onclick = () => setRange("cal");
+  $("histPrev").onclick = () => { hist.month = new Date(hist.month.getFullYear(), hist.month.getMonth() - 1, 1); histRender(); };
+  $("histNext").onclick = () => { hist.month = new Date(hist.month.getFullYear(), hist.month.getMonth() + 1, 1); histRender(); };
+  $("histCal").onclick = (e) => {
+    const b = e.target.closest("[data-day]");
+    if (!b || b.disabled) return;
+    const k = b.dataset.day;
+    if (hist.picked.has(k)) hist.picked.delete(k); else hist.picked.add(k);
+    histRender();
+  };
+  $("histUndated").onclick = () => { hist.undated = !hist.undated; histRender(); };
+  $("histPull").onclick = histPull;
+  $("histCancel").onclick = () => {
+    hist.cancel = true;
+    if (hist.dl) { state.link?.send(`node ${hist.dl.node} sd cancel`); hist.dl.finish(false, "cancelled"); }
+  };
+  $("histQ").oninput = () => histRenderRows();
+  $("histKind").onchange = () => histRenderRows();
+  $("histCat").onchange = () => histRenderRows();
+  $("histCsv").onclick = histExport;
+  $("histForget").onclick = async () => {
+    const recs = [...hist.cache.values()].filter((r) => r.src === hist.src);
+    if (!recs.length || !confirm(`Remove ${recs.length} downloaded file${recs.length === 1 ? "" : "s"} from this browser? The card keeps them.`)) return;
+    for (const r of recs) { hist.cache.delete(r.key); await histDel(r.key); }
+    histRender();
+  };
+  $("histHead").onclick = (e) => {
+    if (e.target.closest("button, select, input, a")) return;   // its own controls
+    histSetOpen(!hist.open);
+  };
+  $("histMode").onclick = (e) => {
+    const b = e.target.closest("[data-v]");
+    if (!b) return;
+    hist.mode = b.dataset.v;
+    try { localStorage.setItem("ss-hist-mode", hist.mode); } catch (_) {}
+    histRenderRows();
+  };
+  $("histDevHead").onclick = (e) => {
+    const th = e.target.closest("[data-k]");
+    if (!th) return;
+    const k = th.dataset.k;
+    // First click: names A to Z, first seen oldest first, everything else biggest first
+    hist.sort = hist.sort.k === k ? { k, dir: -hist.sort.dir } : { k, dir: k === "first" ? -1 : 1 };
+    histRenderRows();
+  };
+  $("histDevRows").onclick = (e) => {
+    if (e.target.closest("a")) return;
+    const tr = e.target.closest("[data-hmac]");
+    if (!tr) return;
+    hist.dev = tr.dataset.hmac;
+    if (!hist.open) histSetOpen(true);
+    histRenderDev();
+    $("histDev").scrollIntoView({ block: "nearest", behavior: "smooth" });
+  };
+  $("histRows").onclick = (e) => {
+    const b = e.target.closest("[data-hmac]");
+    if (!b) return;
+    hist.dev = b.dataset.hmac;
+    histRenderDev();
+    $("histDev").scrollIntoView({ block: "nearest" });
+  };
+}
+
 function handleLine(line) {
   if (line.startsWith('{"t":"rfile')) {   // file pieces: not for the raw log (they're big and many)
-    try { onRemoteFile(JSON.parse(line)); } catch (_) {}
+    try { const m = JSON.parse(line); if (hist.dl) histOnFile(m); else onRemoteFile(m); } catch (_) {}
+    return;
+  }
+  if (hist.dump && line.startsWith('{"t":"log')) {   // the master's log, for HISTORY
+    try { histOnDump(JSON.parse(line)); } catch (_) {}
     return;
   }
   if (logDump.on && line.startsWith('{"t":"log')) {
@@ -1974,8 +2833,11 @@ function handleLine(line) {
       renderStatus();
       maybeShowSetup();
       break;
-    case "error": addEvent(1, msg.msg || "Command failed"); alertBox(msg.msg); break;
-    case "sd_ls": renderSdFiles(msg); break;
+    case "error":
+      if (hist.dl) hist.dl.finish(false, msg.msg || "failed");
+      if (hist.listing) { hist.listing = false; clearTimeout(hist.listTimer); hist.note = msg.msg || "couldn't list the card"; histRender(); }
+      addEvent(1, msg.msg || "Command failed"); alertBox(msg.msg); break;
+    case "sd_ls": renderSdFiles(msg); histOnList(msg); break;
     case "gps": renderGps(msg); break;
     case "ack":
       if (msg.cmd === "linkch" && lchPending && !lchPending.acked) {
@@ -2051,6 +2913,18 @@ function onEvent(e) {
     if (floodIsRepeat(`jam|${e.mhz}`)) return;
     showBanner(`SUB-GHZ JAMMING ON ${e.mhz} MHZ`, `${e.db} dB over the band's normal level · car fobs and wireless alarms there won't get through`);
     addEvent(2, `Sub-GHz jamming on ${e.mhz} MHz (${e.db} dB over normal)`);
+    return;
+  }
+  if (e.event === "csa_spoof") {
+    if (floodIsRepeat(`csa|${e.bssid}`)) return;
+    showBanner(`FAKE CHANNEL SWITCH ON CH ${e.ch}`, `forged beacons for ${e.bssid} telling its devices to move to ch ${e.to} · the real network is still there · knocks devices off it`);
+    addEvent(2, `Fake channel switch on ch ${e.ch}: ${e.count} forged beacons for ${e.bssid} pushing its devices to ch ${e.to}, while the real network kept going`);
+    return;
+  }
+  if (e.event === "sae_flood") {
+    if (floodIsRepeat(`sae|${e.ap}`)) return;
+    showBanner(`WPA3 HANDSHAKE FLOOD ON CH ${e.ch}`, `${e.count}/s at ${e.ap} · made-up senders (e.g. ${e.src}) · ties up the access point`);
+    addEvent(2, `WPA3 handshake flood on ch ${e.ch}: ${e.count}/s at access point ${e.ap} from made-up addresses (e.g. ${e.src})`);
     return;
   }
   if (e.event === "evil_twin") {
@@ -2370,7 +3244,7 @@ function haversineM(a, b, c, d) {
 // Rough distance from signal strength: the power at 1 m (from the device's own TX power
 // when it broadcasts it, else a typical value), spread over open air (n = 2) to indoors (n = 3).
 function distText(d) {
-  if (d.k === "l" || d.k === "s" || d.c === "drone" || d.r == null || d.r <= -127) return "";   // drones: their broadcast position is better
+  if (d.k === "l" || d.k === "s" || d.k === "t" || d.c === "drone" || d.r == null || d.r <= -127) return "";   // drones: their broadcast position is better
   const p1 = d.k === "b" ? (det.id === d.i && det.txp != null ? det.txp : -59) : d.k === "c" ? -55 : -40;
   const at = (n) => Math.pow(10, (p1 - d.r) / (10 * n)) * 3.28084;
   const lo = at(3), hi = at(2);
@@ -2718,6 +3592,7 @@ function renderDetails() {
     : d.k === "l" ? (d.s.startsWith("Meshtastic") ? "Meshtastic node ID (permanent for that radio)"
       : d.s.startsWith("LoRaWAN device joining") ? "part of its DevEUI (permanent device ID)" : "LoRaWAN session address (changes when it rejoins)")
     : d.k === "c" ? "fixed (Classic Bluetooth addresses don't change)"
+    : d.k === "t" ? "the tire sensor's own ID (fixed for the tire's life; the same four together are one car)"
     : d.k === "z" ? (d.x & 0x01 ? "network + short address (handed out by its network, can change)" : "its 64-bit IEEE address (maker block + last 3 bytes; fixed)")
     : d.k === "w" ? (d.x & 0x01 ? "randomized (private)" : "fixed (built into the device)")
     : d.x & 0x02 ? "random static (stays the same until reset)" : d.x & 0x01 ? "random, rotating (private)" : "public (fixed)";
@@ -2733,6 +3608,7 @@ function renderDetails() {
     ["RADIO", d.k === "w" ? `Wi-Fi channel ${d.ch} (${d.ch > 14 ? "5 GHz" : "2.4 GHz"})`
       : d.k === "c" ? "Classic Bluetooth (found by the Classic node while discoverable)"
       : d.k === "s" ? `Sub-GHz ${subGhzMhz(d)} MHz (T-Embed CC1101; SIGNAL is the latest burst's)`
+      : d.k === "t" ? `Tire pressure sensor, ${d.ch === 3 ? "433.92" : "315"} MHz (T-Embed CC1101; sends about once a minute while the car moves)`
       : d.k === "z" ? `802.15.4 channel ${d.ch} (${2405 + 5 * (d.ch - 11)} MHz; heard by a C5 node, receive only)`
       : d.k === "l" ? `LoRa 915 MHz${loraHops(d) ? " · " + loraHops(d) : ""}${d.ch && d.ch !== 255 && d.s.startsWith("Meshtastic") ? " (the signal strength is the last relay's, not this node's)" : ""}`
       : "Bluetooth LE"],

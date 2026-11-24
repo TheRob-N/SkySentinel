@@ -3230,6 +3230,13 @@ void loop() {
     SubGhzBurst b;
     while (subghz::nextBurst(b))
       if (catMask & catBit(CAT_SUBGHZ)) enqueue(subGhzSighting(b.band, b.peak), nullptr, 0);
+    subghz::TpmsHeard t;   // tire sensors: one device each, by its fixed ID
+    while (subghz::nextTpms(t)) {
+      if (!(catMask & catBit(CAT_VEHICLE))) continue;
+      char name[kMaxName + 1];
+      const uint8_t nl = tpmsName(t.r, name, sizeof(name));
+      enqueue(tpmsSighting(t.r, t.rssi, t.band), name, nl);
+    }
   }
 #endif
 #if !defined(SS_HAS_DISPLAY) && defined(RGB_BUILTIN)

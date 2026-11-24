@@ -146,3 +146,11 @@ footer .wrap { display: flex; justify-content: space-between; gap: 20px; flex-wr
 table.tbl { border-collapse: collapse; margin: 10px 0 14px; font-size: 15px; }
 table.tbl th, table.tbl td { padding: 6px 14px; border: 1px solid var(--line); text-align: left; }
 table.tbl th { background: var(--panel2); font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); }
+
+/* Screenshots */
+.shot { margin: 0; }
+.shot img { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); }
+.shot figcaption { color: var(--muted); font-size: 14px; margin-top: 8px; }
+.shot.wide { margin-bottom: 22px; }
+.shots { display: grid; gap: 22px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); margin-bottom: 22px; }
+.shots.phones { grid-template-columns: repeat(auto-fill, minmax(200px, 260px)); align-items: start; }

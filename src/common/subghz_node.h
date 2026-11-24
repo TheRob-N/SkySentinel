@@ -8,6 +8,7 @@
 
 #include "ss_proto.h"
 #include "ss_subghz.h"
+#include "ss_tpms.h"
 
 namespace ss {
 namespace subghz {
@@ -44,6 +45,16 @@ int8_t huntPeak(uint32_t* at_ms = nullptr);
 constexpr uint8_t kHistSlots = 60;
 constexpr uint32_t kHistSlotMs = 10000;   // 60 x 10 s = the last 10 minutes
 void history(uint8_t band, int8_t peak[kHistSlots], uint8_t bursts[kHistSlots]);
+// Tire pressure sensors (ss_tpms.h): after each sweep of the bands the radio listens for
+// them for about a second (FSK sensors, then Schrader's OOK ones) while the Vehicles
+// category is on. 0 = off, 1 = 315 MHz (North America), 2 = 433.92 MHz (Europe, Asia).
+void setTpms(uint8_t band);
+uint8_t tpms();
+struct TpmsHeard { TpmsReading r; int8_t rssi; uint8_t band; };   // band: kSubGhzBandList number
+bool nextTpms(TpmsHeard& out);
+uint32_t tpmsWindows();   // signals the carrier sense caught while listening
+uint32_t tpmsDecoded();   // tire readings decoded
+
 // Before deep sleep / power off: puts the CC1101 to sleep and keeps the SPI bus so the
 // watch task stops using it. Draw on the screen before calling this.
 void shutdown();

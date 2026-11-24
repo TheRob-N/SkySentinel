@@ -69,13 +69,20 @@ void ingestSightings(DeviceTable& table, uint8_t slot, const Sighting* s, size_t
   for (size_t i = 0; i < n; ++i) {
     Device* d = table.find(s[i].addr, radioClass(s[i].kind));
     const uint8_t prevConf = d ? d->conf : 0;
+    const bool prevStrong = d && (d->flags & SF_STRONG_MATCH);
     const auto r = table.ingest(slot, s[i], now_ms, &d);
     if (!d || r == DeviceTable::SELF || r == DeviceTable::REJECTED || d->spoofed || d->alias_of || d->hidden) continue;
     const bool interesting = d->conf >= 50 || (d->flags & SF_STRONG_MATCH);
     if (interesting && (r == DeviceTable::NEW || prevConf < 50)) {
       emitDevice(*d, r == DeviceTable::NEW ? "new" : "upgraded");
       dashDeviceAlert(*d, "New: ");
-      logger::device(*d, r != DeviceTable::NEW);
+    }
+    // Detection log: every alert or notice when it first appears (or gets stronger),
+    // then once on each later day it's still (or again) around.
+    if (logger::raisesNotice(*d)) {
+      const bool wasNotice = r != DeviceTable::NEW && (prevConf >= 40 || prevStrong);
+      if (r == DeviceTable::NEW || !wasNotice) logger::device(*d, r != DeviceTable::NEW);
+      else logger::deviceSeen(*d);
     }
   }
 }
@@ -142,6 +149,8 @@ void emitEvent(const Event& ev, int slot) {
     else if (ev.type == EV_RF_JAM) snprintf(text, sizeof(text), "JAMMING on %u.%02u MHz", ev.count / 100, ev.count % 100);
     else if (ev.type == EV_GPS_JAM) snprintf(text, sizeof(text), "GPS JAMMING: -%u dB", ev.count);
     else if (ev.type == EV_GPS_SPOOF) snprintf(text, sizeof(text), "GPS SPOOFING? %s", gpsSpoofWhyName(ev.channel));
+    else if (ev.type == EV_CSA_SPOOF) snprintf(text, sizeof(text), "FAKE CHANNEL SWITCH ch %u", ev.channel);
+    else if (ev.type == EV_SAE_FLOOD) snprintf(text, sizeof(text), "WPA3 flood on ch %u", ev.channel);
     else snprintf(text, sizeof(text), "%s flood on ch %u", ev.type == EV_DEAUTH_FLOOD ? "Deauth" : "Disassoc", ev.channel);
     g_dashAlerts->raise(2, CAT_PENTEST, text, millis());
   }
@@ -154,6 +163,22 @@ void emitEvent(const Event& ev, int slot) {
   if (ev.type == EV_GPS_SPOOF) {
     Out.printf("{\"t\":\"event\",\"event\":\"gps_spoof\",\"slot\":%d,\"why\":\"%s\",\"value\":%u,\"sats\":%u}\n", slot,
                gpsSpoofWhyName(ev.channel), ev.count, ev.dst[0]);
+    return;
+  }
+  if (ev.type == EV_CSA_SPOOF) {
+    Out.printf("{\"t\":\"event\",\"event\":\"csa_spoof\",\"slot\":%d,\"ch\":%u,\"count\":%u,\"to\":%u,\"bssid\":", slot,
+               ev.channel, ev.count, ev.dst[0]);
+    jsonMac(ev.bssid);
+    Out.println("}");
+    return;
+  }
+  if (ev.type == EV_SAE_FLOOD) {
+    Out.printf("{\"t\":\"event\",\"event\":\"sae_flood\",\"slot\":%d,\"ch\":%u,\"count\":%u,\"src\":", slot, ev.channel,
+               ev.count);
+    jsonMac(ev.src);
+    Out.print(",\"ap\":");
+    jsonMac(ev.dst);
+    Out.println("}");
     return;
   }
   if (ev.type == EV_RF_JAM) {
@@ -315,6 +340,7 @@ static const char* radioLetter(uint8_t radio) {
     case 4: return "l";
     case 5: return "s";
     case 6: return "z";
+    case 7: return "t";
     default: return "o";
   }
 }

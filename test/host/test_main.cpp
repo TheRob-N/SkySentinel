@@ -27,6 +27,7 @@
 #include "ss_fileserve.h"
 #include "ss_linkchan.h"
 #include "ss_154.h"
+#include "ss_tpms.h"
 
 using namespace ss;
 
@@ -1760,6 +1761,181 @@ static void testEvilTwin() {
   CHECK(!fm.poll(ev, 6100));   // once per 5 minutes per radio
 }
 
+static void testDailySeen() {
+  puts("detection log: once per device per day");
+  static DailySeen ds;
+  ds.clear();
+  CHECK(ds.firstToday(7, 20000));
+  CHECK(!ds.firstToday(7, 20000));
+  CHECK(ds.firstToday(8, 20000));
+  CHECK(ds.firstToday(7, 20001));     // the next day
+  CHECK(!ds.firstToday(7, 20001));
+  CHECK(!ds.firstToday(8, 20000));
+  // Full: the oldest day's entries go first
+  ds.clear();
+  CHECK(ds.firstToday(1, 100));                                  // old day
+  for (uint32_t id = 2; id <= DailySeen::kSlots; ++id) CHECK(ds.firstToday(id, 200));
+  CHECK(ds.firstToday(9999, 200));                               // evicts id 1 (day 100)
+  CHECK(!ds.firstToday(2, 200));                                 // today's survive
+  CHECK(!ds.firstToday(DailySeen::kSlots, 200));
+  CHECK(ds.firstToday(1, 100));                                  // 1 was dropped, so it's "new" again
+  CHECK(strcmp(logKindName(LK_DEVICE), "device") == 0);
+  LogRec r;
+  r.kind = LK_DEVICE; r.a = 2; r.has_mac = true;
+  char line[400];
+  formatLogCsv(r, line, sizeof(line));
+  CHECK(strstr(line, "seen today") != nullptr);
+}
+
+static void testTpms() {
+  puts("tire pressure sensors");
+  static uint16_t runs[1200];
+  TpmsReading r[4];
+  struct Case { uint8_t maker; uint32_t id; uint8_t pr, te; int psi; int temp; };
+  // raw values chosen to give ~34 psi; psi expected rounded to whole PSI
+  const Case cases[] = {
+    {TPMS_TOYOTA, 0x1A2B3C4D, 164, 62, 34, 22},        // 164 * 0.25 - 7 = 34, 62 - 40
+    {TPMS_FORD, 0xC0FFEE01, 136, 78, 34, 22},          // 136 / 4, 78 - 56
+    {TPMS_VDO, 0x0BADF00D, 170, 72, 34, 22},           // 170 / 5, 72 - 50
+    {TPMS_CONTINENTAL, 0x12345678, 86, 72, 34, 22},    // 86 * 2.728 kPa
+    {TPMS_TRW, 0x87654321, 175, 72, 34, 22},           // 235 kPa
+    {TPMS_KIA, 0xA1B2C3D4, 170, 72, 34, 22},
+    {TPMS_HONDA, 0x55AA55AA, 170, 72, 34, 22},         // 170 * 0.2
+    {TPMS_SCHRADER_GM, 0x00ABCDEF, 94, 72, 34, 22},    // 94 * 25 mbar, 72 F
+    {TPMS_SCHRADER, 0x0ABCDEF1, 94, 72, 34, 22},       // 94 * 25 mbar, 72 - 50
+  };
+  for (const Case& c : cases) {
+    const size_t n = tpmsEncodeForTest(c.maker, c.id, c.pr, c.te, runs, 1200);
+    CHECK(n > 40);
+    const TpmsMode mode = (c.maker == TPMS_SCHRADER_GM || c.maker == TPMS_SCHRADER) ? TPMS_OOK : TPMS_FSK;
+    const uint8_t got = tpmsDecode(runs, n, mode, r, 4);
+    bool hit = false;
+    for (uint8_t i = 0; i < got; ++i)
+      if (r[i].maker == c.maker && r[i].id == c.id) {
+        hit = true;
+        CHECK_EQ((r[i].psi_x10 + 5) / 10, c.psi);
+        CHECK_EQ(r[i].temp_c, c.temp);
+      }
+    if (!hit) printf("  maker %u (%s): not decoded, %u other\n", c.maker, tpmsMakerName(c.maker), got);
+    CHECK(hit);
+    // The wrong radio setup decodes nothing
+    CHECK_EQ(tpmsDecode(runs, n, mode == TPMS_FSK ? TPMS_OOK : TPMS_FSK, r, 4), 0);
+    // A flipped bit in the middle breaks the check: nothing (or at least not this ID)
+    if (n > 60) {
+      runs[n / 2] = (uint16_t)(runs[n / 2] ^ kTpmsHigh);
+      const uint8_t bad = tpmsDecode(runs, n, mode, r, 4);
+      for (uint8_t i = 0; i < bad; ++i) CHECK(!(r[i].maker == c.maker && r[i].id == c.id));
+    }
+  }
+  {
+    // A burst of three repeats is one reading; noise and silence are none
+    size_t n = tpmsEncodeForTest(TPMS_FORD, 0x01020304, 136, 78, runs, 1200);
+    const size_t one = n;
+    for (int k = 1; k < 3; ++k) { memcpy(runs + k * one, runs, one * sizeof(uint16_t)); n += one; }
+    CHECK_EQ(tpmsDecode(runs, n, TPMS_FSK, r, 4), 1);
+    uint32_t x = 12345;
+    for (size_t i = 0; i < 1000; ++i) {
+      x = x * 1103515245u + 12345u;
+      runs[i] = (uint16_t)(((i & 1) ? kTpmsHigh : 0) | (20 + (x >> 16) % 300));
+    }
+    CHECK_EQ(tpmsDecode(runs, 1000, TPMS_FSK, r, 4), 0);
+    CHECK_EQ(tpmsDecode(runs, 1000, TPMS_OOK, r, 4), 0);
+    CHECK_EQ(tpmsDecode(runs, 0, TPMS_FSK, r, 4), 0);
+  }
+  {
+    TpmsReading t;
+    t.maker = TPMS_TOYOTA; t.id = 0x1A2B3C4D; t.psi_x10 = 342; t.temp_c = 22;
+    const Sighting s = tpmsSighting(t, -70, 0);
+    CHECK(s.kind == KIND_TPMS && radioClass(s.kind) == 7 && s.category == CAT_VEHICLE && s.sig_id == SIG_TPMS);
+    CHECK(!(s.flags & SF_RANDOM_ADDR) && s.addr[0] == 0x02 && s.addr[1] == TPMS_TOYOTA && s.addr[5] == 0x4D);
+    uint8_t mk = 0; uint32_t id = 0;
+    CHECK(tpmsFromAddr(s.addr, &mk, &id) && mk == TPMS_TOYOTA && id == 0x1A2B3C4D);
+    char n[kMaxName + 1];
+    CHECK(tpmsName(t, n, sizeof(n)) && strcmp(n, "Toyota tire 1A2B3C4D 34 psi") == 0);
+    t.maker = TPMS_SCHRADER_GM; t.id = 0xABCDEF; t.psi_x10 = -1;
+    CHECK(tpmsName(t, n, sizeof(n)) && strcmp(n, "GM (Schrader) tire ABCDEF") == 0);
+    for (uint8_t m = 1; m < TPMS_MAKERS; ++m) {
+      t.maker = m; t.id = 0xFFFFFFFF; t.psi_x10 = 1499;
+      CHECK(tpmsName(t, n, sizeof(n)) <= kMaxName);
+    }
+    CHECK(strcmp(sigName(SIG_TPMS), "Unknown") != 0);
+  }
+}
+
+static void testCsaAndSae() {
+  puts("forged channel switch, WPA3 commit flood");
+  const std::initializer_list<uint8_t> ap = {0x3C, 0x22, 0x33, 0x44, 0x55, 0x66};
+  auto beacon = [&](bool csa, uint8_t to) {
+    Frame f(8, kBcast, ap);
+    f.ssid("Neyhard-Home");
+    if (csa) f.ie(37, {1, to, 5});
+    WifiFrame w;
+    parseWifiFrame(f.b.data(), f.b.size(), w);
+    return w;
+  };
+  {
+    const WifiFrame w = beacon(true, 13);
+    CHECK(w.csa && w.csa_ch == 13);
+    Frame e(8, kBcast, ap);
+    e.ie(60, {1, 81, 11, 3});
+    WifiFrame x;
+    CHECK(parseWifiFrame(e.b.data(), e.b.size(), x) && x.csa && x.csa_ch == 11);
+    CHECK(!beacon(false, 0).csa);
+  }
+  Event ev;
+  {
+    // A real switch: plain beacons, then every beacon announces it, then it's gone.
+    FloodMonitor fm;
+    for (int i = 0; i < 10; ++i) fm.onApFrame(beacon(false, 0), 6, 1000 + i * 100);
+    for (int i = 0; i < 8; ++i) fm.onApFrame(beacon(true, 11), 6, 2000 + i * 100);
+    CHECK(!fm.poll(ev, 3000));
+    // ...and the scanner then hearing it on its new channel is no forgery either
+    for (int i = 0; i < 5; ++i) fm.onApFrame(beacon(false, 0), 11, 3200 + i * 100);
+    CHECK(!fm.poll(ev, 4000));
+  }
+  {
+    // A forgery: switch beacons mixed in with the real network's ordinary ones.
+    FloodMonitor fm;
+    for (int i = 0; i < 6; ++i) {
+      fm.onApFrame(beacon(false, 0), 6, 1000 + i * 100);
+      fm.onApFrame(beacon(true, 13), 6, 1050 + i * 100);
+    }
+    CHECK(fm.poll(ev, 2000));
+    CHECK(ev.type == EV_CSA_SPOOF && ev.channel == 6 && ev.dst[0] == 13 && ev.count >= 3 && ev.bssid[0] == 0x3C);
+    fm.onApFrame(beacon(true, 13), 6, 2100);
+    fm.onApFrame(beacon(false, 0), 6, 2150);
+    CHECK(!fm.poll(ev, 2200));   // once per 5 minutes per network
+  }
+  {
+    // SAE commits at one access point from made-up senders
+    auto commit = [&](uint8_t who, uint16_t alg, uint16_t seq) {
+      Frame f(11, ap, {0x02, 0x11, 0x22, 0x33, 0x44, who});
+      for (int i = 0; i < 6; ++i) f.b[16 + i] = f.b[4 + i];   // BSSID = the access point
+      const uint8_t body[6] = {(uint8_t)alg, (uint8_t)(alg >> 8), (uint8_t)seq, (uint8_t)(seq >> 8), 0, 0};
+      f.b.insert(f.b.end(), body, body + 6);
+      WifiFrame w;
+      parseWifiFrame(f.b.data(), f.b.size(), w);
+      return w;
+    };
+    const WifiFrame one = commit(1, 3, 1);
+    CHECK(one.auth_alg == 3 && one.auth_seq == 1 && one.kind == KIND_WIFI_OTHER);
+    FloodMonitor fm;
+    // A phone joining: a commit and a confirm, and a WPA2 client's open-system auth
+    fm.onFrame(commit(1, 3, 1), 6, 1000);
+    fm.onFrame(commit(1, 3, 2), 6, 1010);
+    for (int i = 0; i < 20; ++i) fm.onFrame(commit(2, 0, 1), 6, 1100 + i * 10);
+    CHECK(!fm.poll(ev, 1500));
+    for (int i = 0; i < 20; ++i) fm.onFrame(commit((uint8_t)(10 + i), 3, 1), 6, 2000 + i * 20);
+    CHECK(fm.poll(ev, 2500));
+    CHECK(ev.type == EV_SAE_FLOOD && ev.channel == 6 && ev.count >= 15 && ev.dst[0] == 0x3C && ev.dst[5] == 0x66);
+    for (int i = 0; i < 20; ++i) fm.onFrame(commit((uint8_t)(40 + i), 3, 1), 6, 3000 + i * 20);
+    CHECK(!fm.poll(ev, 3500));   // hold-off
+  }
+  {
+    CHECK(strcmp(logKindName(LK_CSA_SPOOF), "csa_spoof") == 0 && strcmp(logKindName(LK_SAE_FLOOD), "sae_flood") == 0);
+  }
+}
+
 static void testWifiSpam() {
   puts("wifi beacon spam");
   static Device store[256];
@@ -2949,6 +3125,81 @@ static void testLinkChannel() {
 extern const uint32_t ssBuildStamp = 0;
 
 // 2.1.6: Wi-Fi Direct and AWDL, more Bluetooth makers, Zigbee / Thread, GPS jamming / spoofing
+static void testEvilM5Additions() {
+  puts("hacking firmware names, Chameleon, AirPods, skimmers, Apple hotspot / AirPlay");
+  auto ble = [&](Adv& a) { return classifyBle(parseAdv(a, {0xD1, 1, 2, 3, 4, 5}, SS_ADDR_RANDOM)); };
+  Match m;
+  { Adv a; a.name("Evil-Cardputer"); m = ble(a); CHECK(m.category == CAT_PENTEST && m.sig_id == SIG_ATTACK_FW && m.strong); }
+  { Adv a; a.name("Evil-M5Core2"); CHECK_EQ(ble(a).sig_id, SIG_ATTACK_FW); }
+  { Adv a; a.name("Bruce"); CHECK_EQ(ble(a).sig_id, SIG_ATTACK_FW); }
+  { Adv a; a.name("Bruce's iPhone"); CHECK(ble(a).sig_id != SIG_ATTACK_FW); }   // exact only
+  { Adv a; a.name("GhostESP Bridge"); CHECK_EQ(ble(a).sig_id, SIG_ATTACK_FW); }
+  { Adv a; a.name("ChameleonUltra"); m = ble(a); CHECK(m.category == CAT_PENTEST && m.sig_id == SIG_CHAMELEON); }
+  { Adv a; a.name("ChameleonLite"); CHECK_EQ(ble(a).sig_id, SIG_CHAMELEON); }
+  {
+    WifiFrame f;
+    Frame b(8, kBcast, {0x24, 0x0A, 0xC4, 0x11, 0x22, 0x33});
+    b.ssid("BruceNet");
+    CHECK(parseWifiFrame(b.b.data(), b.b.size(), f));
+    m = classifyWifi(f);
+    CHECK(m.category == CAT_PENTEST && m.sig_id == SIG_ATTACK_FW && m.strong);
+    Frame g(8, kBcast, {0x24, 0x0A, 0xC4, 0x11, 0x22, 0x34});
+    g.ssid("PORTAL");
+    CHECK(parseWifiFrame(g.b.data(), g.b.size(), f));
+    m = classifyWifi(f);
+    CHECK(m.sig_id == SIG_ATTACK_FW && !m.strong && m.conf < 50);
+    Frame h(8, kBcast, {0x24, 0x0A, 0xC4, 0x11, 0x22, 0x35});
+    h.ssid("PORTAL-Guest");
+    CHECK(parseWifiFrame(h.b.data(), h.b.size(), f) && classifyWifi(f).sig_id != SIG_ATTACK_FW);
+    Frame p(4, kBcast, {0x24, 0x0A, 0xC4, 0x11, 0x22, 0x36});   // a probe asking for it is not the tool
+    p.ssid("BruceNet");
+    CHECK(parseWifiFrame(p.b.data(), p.b.size(), f) && classifyWifi(f).sig_id != SIG_ATTACK_FW);
+  }
+  {
+    // AirPods Pro 3: proximity pairing [07][len][prefix][27][20]...
+    Adv a; a.mfg(0x004C, {0x07, 0x19, 0x01, 0x27, 0x20, 0x55, 0xAA});
+    const BleAdv p = parseAdv(a, {0xD1, 1, 2, 3, 4, 5}, SS_ADDR_RANDOM);
+    char n[kMaxName + 1];
+    CHECK(bleModelName(p, n) && strcmp(n, "AirPods Pro 3") == 0);
+  }
+  {
+    // Instant Hotspot: Apple 0x0E, battery 80 %, 3 bars
+    Adv a; a.mfg(0x004C, {0x0E, 0x06, 0x01, 0x00, 80, 0x00, 0x07, 3});
+    const BleAdv p = parseAdv(a, {0xD1, 1, 2, 3, 4, 5}, SS_ADDR_RANDOM);
+    m = classifyBle(p);
+    CHECK(m.category == CAT_PHONE && m.sig_id == SIG_APPLE_HOTSPOT);
+    char n[kMaxName + 1];
+    CHECK(bleModelName(p, n) && strcmp(n, "iPhone hotspot 80% 3 bars") == 0);
+    // After a Nearby Info message in the same advert
+    Adv b; b.mfg(0x004C, {0x10, 0x02, 0x0B, 0x1C, 0x0E, 0x06, 0x01, 0x00, 55, 0x00, 0x07, 1});
+    const BleAdv q = parseAdv(b, {0xD1, 1, 2, 3, 4, 5}, SS_ADDR_RANDOM);
+    CHECK_EQ(classifyBle(q).sig_id, SIG_APPLE_HOTSPOT);
+    CHECK(bleModelName(q, n) && strcmp(n, "iPhone hotspot 55% 1 bar") == 0);
+    // AirPlay target with its IPv4 address
+    Adv c; c.mfg(0x004C, {0x09, 0x06, 0x03, 0x0A, 192, 168, 1, 40});
+    const BleAdv r = parseAdv(c, {0xD1, 1, 2, 3, 4, 5}, SS_ADDR_RANDOM);
+    m = classifyBle(r);
+    CHECK(m.category == CAT_OTHER_BLE && m.sig_id == SIG_APPLE_AIRPLAY);
+    CHECK(bleModelName(r, n) && strcmp(n, "AirPlay 192.168.1.40") == 0);
+    // A truncated message is ignored, not read past the end
+    Adv d; d.mfg(0x004C, {0x10, 0x09, 0x0B});
+    CHECK(classifyBle(parseAdv(d, {0xD1, 1, 2, 3, 4, 5}, SS_ADDR_RANDOM)).sig_id != SIG_APPLE_HOTSPOT);
+  }
+  {
+    // Skimmer modules: a stock address block raises a name match, never stands alone
+    const uint8_t yig[6] = {0x00, 0x18, 0xE4, 0x01, 0x02, 0x03}, other[6] = {0x98, 0xD3, 0x31, 1, 2, 3};
+    CHECK_EQ(classifyClassic(0x1F00, "HC-05", yig).conf, 70);
+    CHECK_EQ(classifyClassic(0x1F00, "HC-05", other).conf, 55);
+    CHECK_EQ(classifyClassic(0x1F00, "HC-03").sig_id, SIG_CLASSIC_SERIAL);
+    CHECK(classifyClassic(0x1F00, "", yig).category != CAT_SKIMMER);
+    Adv h8; h8.name("HC-08");
+    CHECK_EQ(classifyBle(parseAdv(h8, {0x20, 0x16, 0x04, 1, 2, 3}, SS_ADDR_PUBLIC)).conf, 55);
+    CHECK_EQ(ble(h8).conf, 40);
+  }
+  for (uint16_t id : {SIG_ATTACK_FW, SIG_CHAMELEON, SIG_APPLE_HOTSPOT, SIG_APPLE_AIRPLAY})
+    CHECK(strcmp(sigName(id), "Unknown") != 0 && sigName(id)[0]);
+}
+
 static void testDetectionSources() {
   puts("detection sources (2.1.6)");
   Match m;
@@ -3161,6 +3412,10 @@ int main(int argc, char** argv) {
   testFollow();
   testLog();
   testDetectionSources();
+  testEvilM5Additions();
+  testCsaAndSae();
+  testTpms();
+  testDailySeen();
   printf("\n%d passed, %d failed\n", g_pass, g_fail);
   return g_fail ? 1 : 0;
 }

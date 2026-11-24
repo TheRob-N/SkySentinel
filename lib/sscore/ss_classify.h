@@ -86,6 +86,9 @@ struct WifiFrame {
   char wps[33] = {0};      // WPS manufacturer / model, "" = none
   bool awdl = false;       // Apple Wireless Direct Link action frame (AirDrop / AirPlay / Sidecar)
   bool p2p = false;        // Wi-Fi Direct: a P2P element, or a P2P public action frame
+  bool csa = false;        // beacon carries a Channel Switch Announcement (element 37 or 60)
+  uint8_t csa_ch = 0;      // ...the channel it tells clients to move to
+  uint16_t auth_alg = 0xFFFF, auth_seq = 0;   // authentication frames: algorithm (3 = WPA3 SAE), sequence
 };
 enum ApSec : uint8_t { SEC_UNKNOWN = 0, SEC_OPEN, SEC_WEP, SEC_WPA, SEC_WPA2, SEC_WPA3, SEC_WPA2_3, SEC_ENTERPRISE, SEC_OWE };
 const char* apSecName(uint8_t s);   // "open", "WPA2", ...
@@ -155,10 +158,10 @@ enum SigId : uint16_t {
   // Skimmers
   SIG_SERIAL_BLE_MODULE = 70,
   // Pentest gear
-  SIG_FLIPPER = 80, SIG_PINEAPPLE, SIG_PWNAGOTCHI,
+  SIG_FLIPPER = 80, SIG_PINEAPPLE, SIG_PWNAGOTCHI, SIG_ATTACK_FW, SIG_CHAMELEON,
   // Phones
   SIG_APPLE_DEVICE = 100, SIG_SAMSUNG_DEVICE, SIG_GOOGLE_DEVICE, SIG_PROBE_RANDOM, SIG_PROBE_GLOBAL,
-  SIG_SAYS_PHONE, SIG_APPLE_AWDL,
+  SIG_SAYS_PHONE, SIG_APPLE_AWDL, SIG_APPLE_HOTSPOT,
   // Audio (SAYS_* = the device announces its own type in its advert)
   SIG_APPLE_AUDIO = 120, SIG_FAST_PAIR, SIG_BOSE, SIG_SONY, SIG_HARMAN,
   SIG_SAYS_EARBUDS, SIG_SAYS_HEADSET, SIG_SAYS_HEADPHONES, SIG_SAYS_SPEAKER, SIG_SAYS_HEARING_AID,
@@ -167,7 +170,7 @@ enum SigId : uint16_t {
   SIG_GARMIN = 140, SIG_POLAR, SIG_HEART_RATE, SIG_SAYS_WATCH, SIG_SAYS_FITNESS, SIG_WEARABLE_MAKER,
   // Other
   SIG_MICROSOFT = 160, SIG_GENERIC_BLE, SIG_ACCESS_POINT, SIG_SAYS_COMPUTER, SIG_SAYS_INPUT, SIG_SWIFT_PAIR,
-  SIG_WIFI_DIRECT, SIG_AMAZON_BLE,
+  SIG_WIFI_DIRECT, SIG_AMAZON_BLE, SIG_APPLE_AIRPLAY,
   // Classic Bluetooth (from the Class of Device a discoverable device answers with)
   SIG_CLASSIC_HEADSET = 180, SIG_CLASSIC_HEADPHONES, SIG_CLASSIC_SPEAKER, SIG_CLASSIC_CAR_AUDIO,
   SIG_CLASSIC_AUDIO, SIG_CLASSIC_PHONE, SIG_CLASSIC_COMPUTER, SIG_CLASSIC_INPUT, SIG_CLASSIC_WEARABLE,
@@ -179,7 +182,7 @@ enum SigId : uint16_t {
   SIG_SUBGHZ_BAND = 210, SIG_SUBGHZ_BAND_LAST = 215,
   // Vehicles
   SIG_TESLA_BLE = 220, SIG_CAR_WIFI, SIG_CAR_BT_NAME, SIG_OBD_DONGLE, SIG_CAR_STEREO,
-  SIG_CAR_MAKER_BLE, SIG_EBIKE_SCOOTER,
+  SIG_CAR_MAKER_BLE, SIG_EBIKE_SCOOTER, SIG_TPMS,
   // Wi-Fi clients seen in their traffic, and makers known by their address block
   SIG_WIFI_CLIENT_PRIVATE = 240, SIG_WIFI_CLIENT, SIG_PHONE_MAKER_WIFI, SIG_AMAZON_WIFI, SIG_PHONE_HOTSPOT,
   // 802.15.4 (C5 nodes, 2.1.6)
@@ -199,7 +202,8 @@ const char* sigName(uint16_t sig_id);
 
 // Classic Bluetooth device found by inquiry: classify from its Class of Device and
 // name. HC-05/HC-06-style serial modules (the usual gas-pump skimmer radio) -> skimmer.
-Match classifyClassic(uint32_t class_of_device, const char* name);
+// addr (optional): the device's address; a skimmer module's stock block raises a name match.
+Match classifyClassic(uint32_t class_of_device, const char* name, const uint8_t* addr = nullptr);
 Sighting makeClassicSighting(const uint8_t addr[6], const Match& m, int8_t rssi);
 
 // A readable model or display name for devices that don't advertise a name of their
@@ -224,10 +228,27 @@ class FloodMonitor {
   // within a minute is a karma / evil-twin radio (Wi-Fi Pineapple "PineAP" and the like),
   // whatever address it hides behind. Real routers give each network its own BSSID.
   void onApFrame(const WifiFrame& f, uint8_t channel, uint32_t now_ms);
-  // Returns true (once per hold-off) when a flood was detected, or an evil twin.
+  // Also on beacons: the same network sending "switch channel" beacons and ordinary ones on
+  // the same channel at once is a forged channel switch (the real access point is still
+  // there, saying nothing of the kind). A real switch puts the announcement in every beacon
+  // until the access point leaves.
+  // onFrame also counts WPA3 (SAE) commit frames sent to an access point: a burst of them
+  // is a flood meant to tie it up.
+  // Returns true (once per hold-off) when a flood was detected, an evil twin, a forged
+  // channel switch.
   bool poll(Event& out, uint32_t now_ms);
 
  private:
+  struct Csa { uint8_t bssid[6]; uint32_t csa_ms, fired_ms; uint16_t n; uint8_t mix, to, rx_ch; bool used; };
+  static constexpr uint8_t kCsas = 6;
+  Csa csas_[kCsas] = {};
+  Event csa_ev_{};
+  bool csa_pending_ = false;
+  uint32_t sae_window_ = 0;
+  uint16_t sae_ = 0;
+  Event sae_ev_{};
+  bool sae_pending_ = false, sae_fired_once_ = false;
+  uint32_t sae_last_fire_ = 0;
   struct Twin { uint8_t bssid[6]; uint32_t first_ms, fired_ms; uint32_t names[5]; uint8_t n; bool used; };
   static constexpr uint8_t kTwins = 8;
   Twin twins_[kTwins] = {};

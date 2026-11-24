@@ -122,10 +122,14 @@ category, signature, confidence, RSSI per node, rotation count, fingerprint, nam
 
 The master records what it found, when and where:
 
-- **What:** every surveillance-category device when first seen (or when it becomes a
-  confident match), following and lingering alerts, deauth / disassoc floods, BLE and
-  Wi-Fi spam, evil twins, and sub-GHz and GPS jamming or spoofing.
-  Phones, earbuds and other consumer gear are not logged.
+- **What:** every device that raises an alert or a notice (a surveillance-category
+  match at 40 or more, or a strong one) when first seen or when its match gets stronger,
+  and again the first time it's heard on each later UTC day (`detail` = `new`,
+  `upgraded`, `seen today`), so a device that keeps coming back shows on every day it
+  did. Plus following and lingering alerts (any category, tires and cars included),
+  deauth / disassoc floods, BLE and Wi-Fi spam, evil twins, fake channel switches, WPA3
+  floods, and sub-GHz and GPS jamming or spoofing. Phones, earbuds and other ordinary
+  devices are not logged (see the constraint below).
 - **When and where:** from a GPS node (the Heltec). Its heartbeat now carries its
   position and the GPS clock. Without a GPS node, records have the master's uptime only.
   While the position is fresh, a `track` row is added every minute the cluster moves
@@ -152,6 +156,49 @@ directly (choose lat / lon as the position columns).
 
 Serial: `log` (status), `log dump`, `log clear`, `log on|off`; on a CYD, `sd`, `sd ls`,
 `sd get <file>`.
+
+**Constraint: the CYD logs alerts and notices, not every device.** Logging every device
+would mean the master sending a summary of its whole device table to the CYD every few
+minutes and the CYD writing it to the card. The CYD is the tightest board for memory
+(about 23 KB free, its largest free block about 14 KB), and SD writes stall for 50 to
+200 ms at times, so it would risk crashes and a laggy dashboard. Full logging is planned
+for a Marauder V8 master, which has PSRAM and its own SD slot and would write its own
+device table with nothing extra over the radio (waits on V8 SD support).
+
+### HISTORY
+
+The **HISTORY** button swaps the live view for a full-width history page (LIVE VIEW, the
+SKY SENTINEL logo, or HISTORY again goes back; the live view keeps updating meanwhile).
+Clicking the HISTORY header folds the days and totals away (arrow up: open, down: folded;
+remembered), leaving the table:
+
+- **From:** Automatic (the default: a CYD's SD card when one is logging, since it has
+  every day, otherwise the master's log), a node's SD card (pulled through the master),
+  or the master's own flash log (the most recent few thousand records). The choice is
+  remembered in the browser. Sources pulled before stay listed,
+  so history can be read with nothing connected.
+- **Which days:** LAST 24 H, LAST 48 H, or PICK DAYS on a calendar (your local days;
+  outlined = on the card, dot = already in this browser; UNDATED = records from before
+  the GPS gave the date). The card keeps one file per UTC day, so a local day can need
+  two files; the page works out which.
+- **DOWNLOAD** says what it will fetch and about how long, and asks first: while it sends,
+  the CYD stays on the master's channel and pauses Classic Bluetooth, so it scans less.
+  It keeps logging. Pulled files are kept in the browser (IndexedDB); a day comes over
+  once, and today's file only sends its new end. CANCEL keeps what arrived; DOWNLOAD again
+  carries on. FORGET DOWNLOADS empties the browser's copy (the card keeps its own).
+- **DEVICES / RECORDS:** DEVICES (the default) groups the range by device, laid out like
+  LIVE DEVICES: type, what it is (with STRONG / FOLLOWING / LINGERING tags), MAC, peak
+  signal, confidence, first and last seen, the days it was seen in everything
+  downloaded, its record count and last place; headers sort, a row opens its details.
+  Attacks, jamming and restarts go in EVENTS below. RECORDS is the raw log, one row per
+  record.
+- **What it shows:** totals (records, devices, following / lingering, attacks,
+  restarts, the busiest categories), records per hour (per day over more than 3 days;
+  red where something alerted), and the records, newest first, with a search box and
+  kind and category filters (the kind filter starts on "All but track", since a moving
+  cluster adds a track point a minute). A MAC opens that device across everything pulled: the
+  days it was seen, first and last time, its names. Places link to OpenStreetMap.
+  EXPORT CSV saves what's shown, in the log's own columns.
 
 **SD files from the web page:** plug the CYD into the computer, CONNECT USB, SETTINGS →
 SD CARD → SHOW FILES, then DOWNLOAD next to a file. It comes over the CYD's USB serial at

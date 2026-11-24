@@ -40,7 +40,12 @@ uint32_t utcNow(uint32_t now_ms);  // 0 = unknown
 // The connected web page's clock: used until a GPS clock arrives (which always wins).
 void setClockFromHost(uint32_t utc, uint32_t now_ms);
 
+// A device that raises an alert or notice (a surveillance-category match at 40 or
+// more, or a strong one), in any category's sense the console uses: logged when new or
+// upgraded, and again the first time it's heard on each later UTC day (deviceSeen).
+bool raisesNotice(const Device& d);
 void device(const Device& d, bool upgraded);
+void deviceSeen(const Device& d);
 void event(const Event& ev);
 void follow(const Device& d, const FollowAlert& a);
 

@@ -307,6 +307,31 @@ static const OuiSig* matchOuiSig(const OuiSig (&list)[N], const uint8_t mac[6]) 
   return nullptr;
 }
 
+template <size_t N>
+static const ToolName* matchToolName(const ToolName (&list)[N], const char* name) {
+  for (size_t i = 0; i < N; ++i)
+    if (list[i].exact ? strcmp(name, list[i].s) == 0 : startsWith(name, list[i].s)) return &list[i];
+  return nullptr;
+}
+
+static bool serialModuleOui(const uint8_t addr[6]) {
+  for (const auto& o : kSerialModuleOuis)
+    if (memcmp(o, addr, 3) == 0) return true;
+  return false;
+}
+
+// Apple manufacturer data is a run of [type][len][value] messages.
+static const uint8_t* appleMsg(const BleAdv& a, uint8_t type, uint8_t* len_out) {
+  for (uint8_t i = 0; i + 2 <= a.mfg_len;) {
+    const uint8_t t = a.mfg[i], l = a.mfg[i + 1];
+    if (i + 2 + l > a.mfg_len) return nullptr;
+    if (t == type) { if (len_out) *len_out = l; return a.mfg + i + 2; }
+    i = (uint8_t)(i + 2 + l);
+  }
+  return nullptr;
+}
+static bool appleHas(const BleAdv& a, uint8_t type) { return appleMsg(a, type, nullptr) != nullptr; }
+
 // ---------------------------------------------------------------------------
 // BLE classification: surveillance first, then consumer.
 
@@ -385,10 +410,16 @@ Match classifyBle(const BleAdv& a) {
     if (ev >= 2) return mk(CAT_PENTEST, SIG_FLIPPER, 95, true);
     if (ev == 1 || (a.name_len && startsWith(a.name, "Flipper "))) return mk(CAT_PENTEST, SIG_FLIPPER, 85, true);
   }
+  if (a.name_len) {
+    for (const char* n : kChameleonNames) if (startsWith(a.name, n)) return mk(CAT_PENTEST, SIG_CHAMELEON, 90, true);
+    if (const ToolName* t = matchToolName(kAttackFwBleNames, a.name))
+      return mk(CAT_PENTEST, SIG_ATTACK_FW, t->conf, t->conf >= 70);
+  }
 
   // Skimmer-style serial modules
   for (const char* n : kSerialModuleNames)
-    if (a.name_len && startsWith(a.name, n)) return mk(CAT_SKIMMER, SIG_SERIAL_BLE_MODULE, 40, false);
+    if (a.name_len && startsWith(a.name, n))
+      return mk(CAT_SKIMMER, SIG_SERIAL_BLE_MODULE, pub && serialModuleOui(a.addr) ? 55 : 40, false);
 
   // What the device says it is (GAP appearance), when it says so.
   const uint8_t appCat = a.has_appearance ? (uint8_t)(a.appearance >> 6) : 0;
@@ -449,6 +480,10 @@ Match classifyBle(const BleAdv& a) {
 
   // Phones and computers
   if (a.has_company) {
+    if (a.company == kCoApple) {
+      if (appleHas(a, kAppleTetheringSource)) return mk(CAT_PHONE, SIG_APPLE_HOTSPOT, 70, false);
+      if (appleHas(a, kAppleAirPlayTarget)) return mk(CAT_OTHER_BLE, SIG_APPLE_AIRPLAY, 60, false);
+    }
     if (a.company == kCoApple && a.mfg_len >= 1) {
       const uint8_t t = a.mfg[0];
       if (t == kAppleNearbyInfo || t == kAppleHandoff || t == kAppleNearbyAction)
@@ -468,11 +503,11 @@ Match classifyBle(const BleAdv& a) {
 // ---------------------------------------------------------------------------
 // Classic Bluetooth
 
-Match classifyClassic(uint32_t cod, const char* name) {
+Match classifyClassic(uint32_t cod, const char* name, const uint8_t* addr) {
   if (name && name[0]) {
     for (const char* n : kObdNames) if (startsWithNoCase(name, n)) return mk(CAT_VEHICLE, SIG_OBD_DONGLE, 70, false);
     for (const char* n : kClassicSerialNames)
-      if (startsWith(name, n)) return mk(CAT_SKIMMER, SIG_CLASSIC_SERIAL, 55, false);
+      if (startsWith(name, n)) return mk(CAT_SKIMMER, SIG_CLASSIC_SERIAL, addr && serialModuleOui(addr) ? 70 : 55, false);
     for (const char* n : kCarBtPrefixes) if (startsWith(name, n)) return mk(CAT_VEHICLE, SIG_CAR_BT_NAME, 65, false);
   }
   const uint8_t major = (uint8_t)((cod >> 8) & 0x1F);
@@ -529,6 +564,25 @@ uint8_t bleModelName(const BleAdv& a, char* out) {
     for (const auto& m : kAppleAudioModels)
       if (m.id == model) return copyName(out, m.name);
     return 0;
+  }
+  // Instant Hotspot: [version][flags][battery %][cell type (2)][signal bars 0..4]
+  if (a.company == kCoApple) {
+    uint8_t l = 0;
+    if (const uint8_t* v = appleMsg(a, kAppleTetheringSource, &l)) {
+      if (l >= 6 && v[2] <= 100 && v[5] <= 4) {
+        const int n = snprintf(out, kMaxName + 1, "iPhone hotspot %u%% %u bar%s", v[2], v[5], v[5] == 1 ? "" : "s");
+        return n > 0 ? (uint8_t)(n > (int)kMaxName ? kMaxName : n) : 0;
+      }
+      return copyName(out, "iPhone hotspot");
+    }
+    // AirPlay target: [flags][config seed][IPv4 address (4)]
+    if (const uint8_t* v = appleMsg(a, kAppleAirPlayTarget, &l)) {
+      if (l >= 6 && v[2]) {
+        const int n = snprintf(out, kMaxName + 1, "AirPlay %u.%u.%u.%u", v[2], v[3], v[4], v[5]);
+        return n > 0 ? (uint8_t)(n > (int)kMaxName ? kMaxName : n) : 0;
+      }
+      return copyName(out, "AirPlay target");
+    }
   }
   // Microsoft Connected Devices beacon: what kind of Windows / Xbox device it is.
   if (a.company == kCoMicrosoft && a.mfg_len >= 2 && a.mfg[0] == 0x01) {
@@ -594,7 +648,14 @@ bool parseWifiFrame(const uint8_t* f, size_t len, WifiFrame& w) {
           w.p2p = true;
       }
       return true;
-    default: w.kind = KIND_WIFI_OTHER; return true;  // deauth, disassoc, auth...
+    case 11:   // authentication: algorithm, sequence, status
+      w.kind = KIND_WIFI_OTHER;
+      if (len >= ie + 4) {
+        w.auth_alg = (uint16_t)(f[ie] | (f[ie + 1] << 8));
+        w.auth_seq = (uint16_t)(f[ie + 2] | (f[ie + 3] << 8));
+      }
+      return true;
+    default: w.kind = KIND_WIFI_OTHER; return true;  // deauth, disassoc...
   }
   if (ie > len) return false;
   if (w.kind != KIND_WIFI_PROBE_REQ && ie >= 12) {
@@ -637,6 +698,14 @@ bool parseWifiFrame(const uint8_t* f, size_t len, WifiFrame& w) {
           if (d[0] == 1) w.width = d[2] ? 160 : (w.width < 80 ? 80 : w.width);
           else if (d[0] == 2 || d[0] == 3) w.width = 160;
         }
+        if (probe) fp = fnvByte(fp, l);
+        break;
+      case 37:  // Channel Switch Announcement: mode, new channel, count
+        if (ap && l >= 3) { w.csa = true; w.csa_ch = d[1]; }
+        if (probe) fp = fnvByte(fp, l);
+        break;
+      case 60:  // Extended Channel Switch Announcement: mode, operating class, new channel, count
+        if (ap && l >= 4) { w.csa = true; w.csa_ch = d[2]; }
         if (probe) fp = fnvByte(fp, l);
         break;
       case 11:  // BSS Load: stations, channel utilization
@@ -757,6 +826,10 @@ Match classifyWifi(const WifiFrame& f) {
   }
   for (uint8_t i = 0; i < f.n_vendor; ++i)
     if ((f.vendor[i] >> 8) == kDjiDroneIdOui) return mk(CAT_DRONE, SIG_DJI_DRONEID, 90, true);
+  // Hacking firmware's own networks (an access point, not a phone looking for one)
+  if (f.has_ssid && f.ssid_len && f.kind != KIND_WIFI_PROBE_REQ)
+    if (const ToolName* t = matchToolName(kAttackFwSsids, f.ssid))
+      return mk(CAT_PENTEST, SIG_ATTACK_FW, t->conf, t->conf >= 70);
   if (f.has_ssid && f.ssid_len && f.kind != KIND_WIFI_PROBE_REQ) {
     for (const char* p : kDroneSsidPrefixes)
       if (startsWithNoCase(f.ssid, p)) return mk(CAT_DRONE, SIG_DRONE_SSID, 75, false);
@@ -875,6 +948,11 @@ const char* sigName(uint16_t id) {
     case SIG_FLIPPER: return "Flipper Zero";
     case SIG_PINEAPPLE: return "Wi-Fi Pineapple";
     case SIG_PWNAGOTCHI: return "Pwnagotchi";
+    case SIG_TPMS: return "Tire pressure sensor (TPMS)";
+    case SIG_ATTACK_FW: return "ESP32 hacking firmware (Evil-M5, Bruce, GhostESP, Marauder)";
+    case SIG_CHAMELEON: return "Chameleon RFID / NFC card cloner";
+    case SIG_APPLE_HOTSPOT: return "iPhone / iPad offering its hotspot";
+    case SIG_APPLE_AIRPLAY: return "AirPlay target (Apple TV, HomePod, speaker)";
     case SIG_APPLE_DEVICE: return "Apple device";
     case SIG_SAMSUNG_DEVICE: return "Samsung device";
     case SIG_GOOGLE_DEVICE: return "Google device";
@@ -1096,6 +1174,26 @@ Sighting makeWifiSighting(const WifiFrame& f, const Match& m, uint8_t channel, i
 // Flood monitor
 
 void FloodMonitor::onFrame(const WifiFrame& f, uint8_t channel, uint32_t now_ms) {
+  if (f.type == 0 && f.subtype == 11) {
+    // SAE commit (algorithm 3, sequence 1) to an access point. A phone joining sends one
+    // or two; a flood sends them by the dozen from made-up addresses.
+    if (f.auth_alg != 3 || f.auth_seq != 1 || memcmp(f.addr1, f.addr3, 6) != 0) return;
+    if (now_ms - sae_window_ >= 1000) { sae_window_ = now_ms; sae_ = 0; }
+    ++sae_;
+    if (sae_ >= threshold_ && !sae_pending_) {
+      sae_pending_ = true;
+      sae_ev_ = Event();
+      sae_ev_.type = EV_SAE_FLOOD;
+      sae_ev_.channel = channel;
+      sae_ev_.count = sae_;
+      memcpy(sae_ev_.src, f.addr2, 6);
+      memcpy(sae_ev_.dst, f.addr1, 6);
+      memcpy(sae_ev_.bssid, f.addr3, 6);
+    } else if (sae_pending_ && sae_ > sae_ev_.count) {
+      sae_ev_.count = sae_;
+    }
+    return;
+  }
   if (f.type != 0 || (f.subtype != 12 && f.subtype != 10)) return;
   if (now_ms - window_start_ >= 1000) {
     window_start_ = now_ms;
@@ -1117,6 +1215,40 @@ void FloodMonitor::onFrame(const WifiFrame& f, uint8_t channel, uint32_t now_ms)
 }
 
 void FloodMonitor::onApFrame(const WifiFrame& f, uint8_t channel, uint32_t now_ms) {
+  if (f.kind == KIND_WIFI_BEACON) {
+    Csa* c = nullptr;
+    for (Csa& x : csas_) if (x.used && memcmp(x.bssid, f.addr3, 6) == 0) { c = &x; break; }
+    if (f.csa) {
+      if (!c) {   // take a free slot, else the one that went quiet longest ago
+        c = &csas_[0];
+        for (Csa& x : csas_) {
+          if (!x.used) { c = &x; break; }
+          if (x.csa_ms < c->csa_ms) c = &x;
+        }
+        *c = Csa();
+        c->used = true;
+        memcpy(c->bssid, f.addr3, 6);
+      }
+      if (now_ms - c->csa_ms > 3000 || c->rx_ch != channel) { c->n = 0; c->mix = 0; }
+      c->csa_ms = now_ms ? now_ms : 1;
+      c->rx_ch = channel;
+      c->to = f.csa_ch;
+      if (c->n < 0xFFFF) ++c->n;
+    } else if (c && c->n && channel == c->rx_ch && now_ms - c->csa_ms <= 3000) {
+      if (c->mix < 255) ++c->mix;   // the real one, still here, not switching
+    }
+    if (c && c->n >= 3 && c->mix >= 2 && (!c->fired_ms || now_ms - c->fired_ms > 300000) && !csa_pending_) {
+      c->fired_ms = now_ms ? now_ms : 1;
+      csa_ev_ = Event();
+      csa_ev_.type = EV_CSA_SPOOF;
+      csa_ev_.channel = channel;
+      csa_ev_.count = c->n;
+      csa_ev_.dst[0] = c->to;
+      memcpy(csa_ev_.src, c->bssid, 6);
+      memcpy(csa_ev_.bssid, c->bssid, 6);
+      csa_pending_ = true;
+    }
+  }
   if ((f.kind != KIND_WIFI_BEACON && f.kind != KIND_WIFI_PROBE_RESP) || !f.has_ssid || !f.ssid_len || !f.ssid[0]) return;
   const uint32_t h = fnv1a((const uint8_t*)f.ssid, f.ssid_len);
   Twin* t = nullptr;
@@ -1149,6 +1281,15 @@ void FloodMonitor::onApFrame(const WifiFrame& f, uint8_t channel, uint32_t now_m
 
 bool FloodMonitor::poll(Event& out, uint32_t now_ms) {
   if (twin_pending_ && !pending_) { out = twin_ev_; twin_pending_ = false; return true; }
+  if (csa_pending_ && !pending_) { out = csa_ev_; csa_pending_ = false; return true; }
+  if (sae_pending_ && !pending_) {
+    sae_pending_ = false;
+    if (sae_fired_once_ && now_ms - sae_last_fire_ < holdoff_ms_) return false;
+    sae_fired_once_ = true;
+    sae_last_fire_ = now_ms;
+    out = sae_ev_;
+    return true;
+  }
   if (!pending_) return false;
   if (fired_once_ && now_ms - last_fire_ < holdoff_ms_) { pending_ = false; return false; }
   out = last_;

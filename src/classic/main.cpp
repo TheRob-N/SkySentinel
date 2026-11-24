@@ -282,7 +282,7 @@ static void onGap(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t* param) {
     name[nameLen] = '\0';
     classicFound = classicFound + 1;
     if (rssi < rssiFloor && rssi != -127) return;
-    const Match m = classifyClassic(cod, name);
+    const Match m = classifyClassic(cod, name, param->disc_res.bda);
     if (!(catMask & catBit(m.category))) return;
     enqueue(makeClassicSighting(param->disc_res.bda, m, rssi), name, nameLen);
   } else if (event == ESP_BT_GAP_DISC_STATE_CHANGED_EVT) {

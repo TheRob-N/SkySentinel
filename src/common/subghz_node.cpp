@@ -3,13 +3,23 @@
 
 #include <RadioLib.h>
 #include <SPI.h>
+#include <esp_timer.h>
+#include <hal/gpio_ll.h>
+#include <soc/gpio_struct.h>
 
 #include "tembed_hw.h"
 
 namespace ss {
 namespace subghz {
 
-static CC1101* radio = nullptr;
+// RadioLib keeps register writes to itself; TPMS listening needs two of them (what GDO2
+// says, and the carrier sense threshold).
+class CcRadio : public CC1101 {
+ public:
+  using CC1101::CC1101;
+  void reg(uint8_t r, uint8_t v) { SPIwriteRegister(r, v); }
+};
+static CcRadio* radio = nullptr;
 static volatile CatMask* cats_ = nullptr;
 static bool ready_ = false;
 static volatile bool running_ = false;
@@ -61,6 +71,143 @@ static bool tune(float mhz) {
 static int8_t rssiNow() {
   tembed::SpiLock l;
   return (int8_t)radio->getRSSI();
+}
+
+// ---------------------------------------------------------------------------
+// Tire pressure sensors. The CC1101 demodulates into GDO0 (direct mode) and raises GDO2
+// while something is on the air (carrier sense). GDO2 rising starts a capture: every
+// GDO0 edge records how long the level held. GDO2 falling (or a full buffer) hands the
+// capture to the task, which decodes it (ss_tpms.cpp). GDO0's interrupt is only on while
+// GDO2 is up: with nothing on the air the demodulator output is noise, edges by the
+// ten thousand a second.
+static volatile uint8_t tpmsSet_ = 1;
+static constexpr uint16_t kCapRuns = 1400;   // ~70 ms of FSK: a burst of repeats
+static uint16_t cap_[2][kCapRuns];
+static volatile uint16_t capLen_[2] = {0, 0};
+static volatile bool capFull_[2] = {false, false};
+static volatile uint8_t capCur_ = 0;
+static volatile bool capOn_ = false, csHigh_ = false;
+static volatile int64_t lastEdge_ = 0;
+static volatile uint32_t csWindows_ = 0, tpmsDecoded_ = 0;
+static TpmsHeard tfifo_[8];
+static uint8_t tfifoHead_ = 0, tfifoLen_ = 0;
+
+static inline uint16_t runUs(int64_t d) { return (uint16_t)(d < 0 ? 0 : d > kTpmsUsMask ? kTpmsUsMask : d); }
+
+static void IRAM_ATTR capHandOff(uint8_t c) {
+  capFull_[c] = true;
+  capCur_ = (uint8_t)(c ^ 1);
+}
+
+static void IRAM_ATTR onCarrier() {
+  if (!capOn_) return;
+  const bool cs = gpio_ll_get_level(&GPIO, tembed::CC_GDO2) != 0;
+  if (cs && !csHigh_) {
+    const uint8_t c = capCur_;
+    if (capFull_[c]) return;   // both captures still waiting for the decoder
+    capLen_[c] = 0;
+    lastEdge_ = esp_timer_get_time();
+    csHigh_ = true;
+    csWindows_ = csWindows_ + 1;
+    gpio_ll_set_intr_type(&GPIO, tembed::CC_GDO0, GPIO_INTR_ANYEDGE);
+  } else if (!cs && csHigh_) {
+    gpio_ll_set_intr_type(&GPIO, tembed::CC_GDO0, GPIO_INTR_DISABLE);
+    csHigh_ = false;
+    const uint8_t c = capCur_;
+    uint16_t n = capLen_[c];
+    if (n < kCapRuns) {   // the run still going when the signal stopped
+      const bool lvl = gpio_ll_get_level(&GPIO, tembed::CC_GDO0) != 0;
+      cap_[c][n++] = (uint16_t)((lvl ? kTpmsHigh : 0) | runUs(esp_timer_get_time() - lastEdge_));
+      capLen_[c] = n;
+    }
+    capHandOff(c);
+  }
+}
+
+static void IRAM_ATTR onData() {
+  if (!csHigh_) return;
+  const int64_t now = esp_timer_get_time();
+  const bool lvl = gpio_ll_get_level(&GPIO, tembed::CC_GDO0) != 0;   // the level after this edge
+  const uint8_t c = capCur_;
+  uint16_t n = capLen_[c];
+  if (n < kCapRuns) {
+    cap_[c][n++] = (uint16_t)((lvl ? 0 : kTpmsHigh) | runUs(now - lastEdge_));
+    capLen_[c] = n;
+  }
+  lastEdge_ = now;
+  if (n >= kCapRuns) {
+    gpio_ll_set_intr_type(&GPIO, tembed::CC_GDO0, GPIO_INTR_DISABLE);
+    csHigh_ = false;
+    capHandOff(c);
+  }
+}
+
+static void tpmsDecodeCapture(uint8_t c, TpmsMode mode, int8_t rssi, uint8_t band) {
+  TpmsReading r[4];
+  const uint8_t n = tpmsDecode(cap_[c], capLen_[c], mode, r, 4);
+  capFull_[c] = false;
+  for (uint8_t i = 0; i < n; ++i) {
+    tpmsDecoded_ = tpmsDecoded_ + 1;
+    portENTER_CRITICAL(&evMux);
+    if (tfifoLen_ == 8) { tfifoHead_ = (uint8_t)((tfifoHead_ + 1) % 8); --tfifoLen_; }
+    TpmsHeard& h = tfifo_[(tfifoHead_ + tfifoLen_) % 8];
+    h.r = r[i];
+    h.rssi = rssi;
+    h.band = band;
+    ++tfifoLen_;
+    portEXIT_CRITICAL(&evMux);
+  }
+}
+
+// Listens for tire sensors for `ms`, then puts the radio back as the band watch wants it.
+static void tpmsListen(TpmsMode mode, uint32_t ms) {
+  const bool eu = tpmsSet_ == 2;
+  const float mhz = eu ? 433.92f : 315.0f;
+  const uint8_t band = eu ? 3 : 0;   // kSubGhzBandList: 433.92 / 315 MHz
+  {
+    tembed::SpiLock l;
+    tembed::antennaFor(mhz);
+    radio->setOOK(mode == TPMS_OOK);
+    radio->setFrequency(mhz);
+    // Tire sensors: FSK at 19.2 kBaud (52 us half-bits), about +-38 kHz; Schrader OOK at ~8.2 kBaud.
+    radio->setBitRate(mode == TPMS_OOK ? 8.2f : 19.2f);
+    if (mode == TPMS_FSK) radio->setFrequencyDeviation(38.0f);
+    radio->setRxBandwidth(mode == TPMS_OOK ? 270.0f : 203.0f);
+    radio->receiveDirectAsync();
+    radio->reg(RADIOLIB_CC1101_REG_IOCFG2, RADIOLIB_CC1101_GDOX_CARRIER_SENSE);
+    radio->reg(RADIOLIB_CC1101_REG_AGCCTRL1, 0x68);   // carrier sense: 10 dB over the noise, no absolute level
+  }
+  capFull_[0] = capFull_[1] = false;
+  capCur_ = 0;
+  csHigh_ = false;
+  capOn_ = true;
+  gpio_ll_set_intr_type(&GPIO, tembed::CC_GDO2, GPIO_INTR_ANYEDGE);
+  int8_t peak = -127;
+  const uint32_t t0 = millis();
+  while (millis() - t0 < ms) {
+    {
+      tembed::SpiLock l;
+      const int8_t v = (int8_t)radio->getRSSI();
+      if (v > peak) peak = v;
+    }
+    for (uint8_t c = 0; c < 2; ++c)
+      if (capFull_[c]) { tpmsDecodeCapture(c, mode, peak, band); peak = -127; }
+    vTaskDelay(pdMS_TO_TICKS(4));
+  }
+  capOn_ = false;
+  gpio_ll_set_intr_type(&GPIO, tembed::CC_GDO2, GPIO_INTR_DISABLE);
+  gpio_ll_set_intr_type(&GPIO, tembed::CC_GDO0, GPIO_INTR_DISABLE);
+  csHigh_ = false;
+  for (uint8_t c = 0; c < 2; ++c)
+    if (capFull_[c]) tpmsDecodeCapture(c, mode, peak, band);
+  {
+    tembed::SpiLock l;
+    radio->reg(RADIOLIB_CC1101_REG_AGCCTRL1, 0x40);   // the chip's default
+    if (mode == TPMS_FSK) radio->setFrequencyDeviation(5.0f);
+    radio->setBitRate(4.8f);
+    radio->setRxBandwidth(650.0f);
+    radio->setOOK(true);
+  }
 }
 
 static void task(void*) {
@@ -128,6 +275,11 @@ static void task(void*) {
       }
     }
     sweeps_ = sweeps_ + 1;
+    // Tire sensors, between sweeps (not while HUNT holds the radio on one band)
+    if (tpmsSet_ && huntBand_ >= kSubGhzBands && cats_ && (*cats_ & catBit(CAT_VEHICLE))) {
+      tpmsListen(TPMS_FSK, 700);
+      tpmsListen(TPMS_OOK, 500);
+    }
   }
 }
 
@@ -135,7 +287,7 @@ bool begin(volatile CatMask* category_mask) {
   cats_ = category_mask;
   tembed::begin();
   static Module mod(tembed::CC_CS, tembed::CC_GDO0, RADIOLIB_NC, tembed::CC_GDO2, SPI);
-  static CC1101 r(&mod);
+  static CcRadio r(&mod);
   radio = &r;
   {
     tembed::SpiLock l;
@@ -146,6 +298,13 @@ bool begin(volatile CatMask* category_mask) {
     radio->setOOK(true);
   }
   ready_ = true;
+  // Tire sensor capture: interrupts on both GDO pins, kept off until a listen turns them on.
+  pinMode(tembed::CC_GDO0, INPUT);
+  pinMode(tembed::CC_GDO2, INPUT);
+  attachInterrupt(tembed::CC_GDO2, onCarrier, CHANGE);
+  attachInterrupt(tembed::CC_GDO0, onData, CHANGE);
+  gpio_ll_set_intr_type(&GPIO, tembed::CC_GDO2, GPIO_INTR_DISABLE);
+  gpio_ll_set_intr_type(&GPIO, tembed::CC_GDO0, GPIO_INTR_DISABLE);
   xTaskCreate(task, "subghz", 4096, nullptr, 1, nullptr);
   return true;
 }
@@ -194,6 +353,18 @@ void shutdown() {
   if (radio && ready_) radio->sleep();
 }
 const SubGhzWatch& watch() { return watch_; }
+
+void setTpms(uint8_t band) { tpmsSet_ = band > 2 ? 1 : band; }
+uint8_t tpms() { return tpmsSet_; }
+uint32_t tpmsWindows() { return csWindows_; }
+uint32_t tpmsDecoded() { return tpmsDecoded_; }
+bool nextTpms(TpmsHeard& out) {
+  bool got = false;
+  portENTER_CRITICAL(&evMux);
+  if (tfifoLen_) { out = tfifo_[tfifoHead_]; tfifoHead_ = (uint8_t)((tfifoHead_ + 1) % 8); --tfifoLen_; got = true; }
+  portEXIT_CRITICAL(&evMux);
+  return got;
+}
 
 bool pollEvent(Event& out) {
   bool got = false;

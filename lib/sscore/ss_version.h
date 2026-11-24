@@ -1,6 +1,6 @@
 // The SkySentinel release this firmware belongs to (shown on screens and the page).
 #pragma once
-#define SS_RELEASE "2.1.6"
+#define SS_RELEASE "2.1.7"
 
 #include <stdint.h>
 
